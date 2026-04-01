@@ -1,34 +1,43 @@
 <?php
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-/* =========================================================
- | Ambil ENV (App Platform)
- * ========================================================= */
+/*
+|--------------------------------------------------------------------------
+| Database Connection
+|--------------------------------------------------------------------------
+| Ambil dari Environment Variables cloud.
+| Kalau di lokal belum ada env, fallback ke localhost.
+*/
 $host = getenv('DB_HOST') ?: 'localhost';
 $port = (int)(getenv('DB_PORT') ?: 3306);
 $user = getenv('DB_USER') ?: 'root';
 $pass = getenv('DB_PASS') ?: '';
 $db   = getenv('DB_NAME') ?: 'simklinik';
 
-/* =========================================================
- | Koneksi MySQL (pakai TCP + SSL untuk DO)
- * ========================================================= */
-<?php
-require_once __DIR__ . '/config.php';
+$conn = mysqli_init();
+
+if (!$conn) {
+    die("DB ERROR: mysqli_init gagal");
 }
 
-/* Aktifkan SSL (DO Managed MySQL butuh SSL) */
+/*
+|--------------------------------------------------------------------------
+| SSL untuk managed database cloud
+|--------------------------------------------------------------------------
+*/
 mysqli_ssl_set($conn, NULL, NULL, NULL, NULL, NULL);
 
 if (!mysqli_real_connect($conn, $host, $user, $pass, $db, $port, NULL, MYSQLI_CLIENT_SSL)) {
-    die("DB CONNECT ERROR: " . mysqli_connect_error());
+    die("DB ERROR: " . mysqli_connect_error());
 }
 
 $conn->set_charset('utf8mb4');
 
-/* =========================================================
- | Konfigurasi Klinis (boleh tetap seperti sebelumnya)
- * ========================================================= */
+/*
+|--------------------------------------------------------------------------
+| Konfigurasi Klinik
+|--------------------------------------------------------------------------
+*/
 if (!defined('LOGO_KLINIK')) {
     define('LOGO_KLINIK', __DIR__ . '/assets/logo-klinik.png');
 }
@@ -57,7 +66,7 @@ if (!defined('SIP_DOKTER')) {
     define('SIP_DOKTER', 'SIP.446/DRG/1/440-CPMptsp/2024');
 }
 if (!defined('BANK_KLINIK')) {
-    define('BANK_KLINIK', 'Transfer / Tunai / Debit / QRIS');
+    define('BANK_KLINIK', 'Transfer Bank BCA 4780209661 / Tunai / Debit / QRIS');
 }
 if (!defined('QRIS_INFO')) {
     define('QRIS_INFO', 'Scan QRIS tersedia di resepsionis');
