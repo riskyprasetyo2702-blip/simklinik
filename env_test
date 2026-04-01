@@ -1,0 +1,7 @@
+<?php
+echo "<pre>";
+echo "DB_HOST = " . htmlspecialchars(getenv('DB_HOST') ?: '-') . "\n";
+echo "DB_PORT = " . htmlspecialchars(getenv('DB_PORT') ?: '-') . "\n";
+echo "DB_USER = " . htmlspecialchars(getenv('DB_USER') ?: '-') . "\n";
+echo "DB_NAME = " . htmlspecialchars(getenv('DB_NAME') ?: '-') . "\n";
+echo "</pre>";
