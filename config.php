@@ -13,9 +13,8 @@ $db   = getenv('DB_NAME') ?: 'simklinik';
 /* =========================================================
  | Koneksi MySQL (pakai TCP + SSL untuk DO)
  * ========================================================= */
-$conn = mysqli_init();
-if (!$conn) {
-    die("mysqli_init gagal");
+<?php
+require_once __DIR__ . '/config.php';
 }
 
 /* Aktifkan SSL (DO Managed MySQL butuh SSL) */
