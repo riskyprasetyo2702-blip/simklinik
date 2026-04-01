@@ -1,81 +1,84 @@
 <?php
-mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+session_start();
+require_once __DIR__ . '/config.php';
 
-/*
-|--------------------------------------------------------------------------
-| Ambil env cloud / fallback lokal
-|--------------------------------------------------------------------------
-*/
-$host = getenv('DB_HOST') ?: 'localhost';
-$port = (int)(getenv('DB_PORT') ?: 3306);
-$user = getenv('DB_USER') ?: 'root';
-$pass = getenv('DB_PASS') ?: '';
-$db   = getenv('DB_NAME') ?: 'simklinik';
-
-/*
-|--------------------------------------------------------------------------
-| Debug cepat kalau env salah
-|--------------------------------------------------------------------------
-*/
-if ($host === '' || $user === '' || $db === '') {
-    die("ENV database belum lengkap");
+if (isset($_SESSION['login']) && $_SESSION['login'] === true) {
+    header("Location: dashboard.php");
+    exit;
 }
 
-/*
-|--------------------------------------------------------------------------
-| Koneksi MySQL
-|--------------------------------------------------------------------------
-*/
-$conn = mysqli_init();
+$error = '';
 
-if (!$conn) {
-    die("DB ERROR: mysqli_init gagal");
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $username = trim($_POST['username'] ?? '');
+    $password = trim($_POST['password'] ?? '');
 
-/* SSL untuk managed MySQL cloud */
-mysqli_ssl_set($conn, NULL, NULL, NULL, NULL, NULL);
+    if ($username === '' || $password === '') {
+        $error = 'Username dan password wajib diisi.';
+    } else {
+        $stmt = $conn->prepare("SELECT id, username, nama, password FROM users WHERE username = ? LIMIT 1");
+        $stmt->bind_param("s", $username);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $user = $result->fetch_assoc();
+        $stmt->close();
 
-if (!mysqli_real_connect($conn, $host, $user, $pass, $db, $port, NULL, MYSQLI_CLIENT_SSL)) {
-    die("DB CONNECT ERROR: " . mysqli_connect_error());
-}
+        if ($user) {
+            $valid = false;
 
-$conn->set_charset('utf8mb4');
+            if (!empty($user['password']) && password_verify($password, $user['password'])) {
+                $valid = true;
+            } elseif (!empty($user['password']) && $password === $user['password']) {
+                $valid = true;
+            }
 
-/*
-|--------------------------------------------------------------------------
-| Konfigurasi klinik
-|--------------------------------------------------------------------------
-*/
-if (!defined('LOGO_KLINIK')) {
-    define('LOGO_KLINIK', __DIR__ . '/assets/logo-klinik.png');
+            if ($valid) {
+                $_SESSION['login'] = true;
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['username'] = $user['username'];
+                $_SESSION['nama'] = $user['nama'] ?? $user['username'];
+
+                header("Location: dashboard.php");
+                exit;
+            }
+        }
+
+        $error = 'Username atau password salah.';
+    }
 }
-if (!defined('QRIS_IMAGE')) {
-    define('QRIS_IMAGE', __DIR__ . '/assets/qris.png');
-}
-if (!defined('NAMA_KLINIK')) {
-    define('NAMA_KLINIK', 'Poli Gigi');
-}
-if (!defined('TAGLINE_KLINIK')) {
-    define('TAGLINE_KLINIK', 'Praktek Mandiri Dokter Gigi Andreas Aryo');
-}
-if (!defined('ALAMAT_KLINIK')) {
-    define('ALAMAT_KLINIK', 'Bukit Nusa Indah 77');
-}
-if (!defined('TELP_KLINIK')) {
-    define('TELP_KLINIK', '08111-18-17-18');
-}
-if (!defined('EMAIL_KLINIK')) {
-    define('EMAIL_KLINIK', 'tigadental@gmail.com');
-}
-if (!defined('DOKTER_KLINIK')) {
-    define('DOKTER_KLINIK', 'drg. Andreas Aryo R.P');
-}
-if (!defined('SIP_DOKTER')) {
-    define('SIP_DOKTER', 'SIP.446/DRG/1/440-CPMptsp/2024');
-}
-if (!defined('BANK_KLINIK')) {
-    define('BANK_KLINIK', 'Transfer Bank BCA 4780209661 / Tunai / Debit / QRIS');
-}
-if (!defined('QRIS_INFO')) {
-    define('QRIS_INFO', 'Scan QRIS tersedia di resepsionis');
-}
+?>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login Klinik</title>
+    <style>
+        body{font-family:Arial,sans-serif;background:#f4f7fb;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
+        .box{background:#fff;padding:30px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08);width:100%;max-width:380px}
+        h2{margin-top:0}
+        input{width:100%;padding:12px;margin:8px 0 14px 0;border:1px solid #ccc;border-radius:8px;box-sizing:border-box}
+        button{width:100%;padding:12px;border:none;background:#2563eb;color:#fff;border-radius:8px;cursor:pointer}
+        .err{background:#fee2e2;color:#991b1b;padding:10px;border-radius:8px;margin-bottom:12px}
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2>Login Klinik</h2>
+
+        <?php if ($error !== ''): ?>
+            <div class="err"><?= htmlspecialchars($error) ?></div>
+        <?php endif; ?>
+
+        <form method="POST">
+            <label>Username</label>
+            <input type="text" name="username" required>
+
+            <label>Password</label>
+            <input type="password" name="password" required>
+
+            <button type="submit">Masuk</button>
+        </form>
+    </div>
+</body>
+</html>
