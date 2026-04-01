@@ -16,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($username === '' || $password === '') {
         $error = 'Username dan password wajib diisi.';
     } else {
-        $stmt = $conn->prepare("SELECT * FROM users WHERE username = ? LIMIT 1");
+        $stmt = $conn->prepare("SELECT id, username, nama, password FROM users WHERE username = ? LIMIT 1");
         $stmt->bind_param("s", $username);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -34,9 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($valid) {
                 $_SESSION['login'] = true;
-                $_SESSION['user_id'] = $user['id'] ?? 0;
-                $_SESSION['nama'] = $user['nama'] ?? ($user['username'] ?? 'User');
-                $_SESSION['username'] = $user['username'] ?? '';
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['username'] = $user['username'];
+                $_SESSION['nama'] = $user['nama'] ?? $user['username'];
 
                 header("Location: dashboard.php");
                 exit;
@@ -52,74 +52,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - <?= htmlspecialchars(NAMA_KLINIK) ?></title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>Login Klinik</title>
     <style>
-        body{
-            background: linear-gradient(135deg,#e0f2fe,#f8fafc);
-            min-height:100vh;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            font-family:Arial,sans-serif;
-        }
-        .login-card{
-            width:100%;
-            max-width:430px;
-            background:#fff;
-            border-radius:20px;
-            box-shadow:0 15px 40px rgba(0,0,0,.08);
-            padding:32px;
-        }
-        .brand{
-            text-align:center;
-            margin-bottom:24px;
-        }
-        .brand img{
-            width:72px;
-            height:72px;
-            object-fit:contain;
-            margin-bottom:10px;
-        }
-        .brand h2{
-            font-size:24px;
-            font-weight:700;
-            margin:0;
-            color:#0f172a;
-        }
-        .brand p{
-            color:#64748b;
-            margin-top:6px;
-            font-size:14px;
-        }
+        body{font-family:Arial,sans-serif;background:#f4f7fb;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
+        .box{background:#fff;padding:30px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08);width:100%;max-width:380px}
+        h2{margin-top:0}
+        input{width:100%;padding:12px;margin:8px 0 14px 0;border:1px solid #ccc;border-radius:8px;box-sizing:border-box}
+        button{width:100%;padding:12px;border:none;background:#2563eb;color:#fff;border-radius:8px;cursor:pointer}
+        .err{background:#fee2e2;color:#991b1b;padding:10px;border-radius:8px;margin-bottom:12px}
     </style>
 </head>
 <body>
-    <div class="login-card">
-        <div class="brand">
-            <?php if (file_exists(LOGO_KLINIK)): ?>
-                <img src="assets/logo-klinik.png" alt="Logo Klinik">
-            <?php endif; ?>
-            <h2><?= htmlspecialchars(NAMA_KLINIK) ?></h2>
-            <p><?= htmlspecialchars(TAGLINE_KLINIK) ?></p>
-        </div>
+    <div class="box">
+        <h2>Login Klinik</h2>
 
         <?php if ($error !== ''): ?>
-            <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
+            <div class="err"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
 
         <form method="POST">
-            <div class="mb-3">
-                <label class="form-label">Username</label>
-                <input type="text" name="username" class="form-control" required autofocus>
-            </div>
+            <label>Username</label>
+            <input type="text" name="username" required>
 
-            <div class="mb-3">
-                <label class="form-label">Password</label>
-                <input type="password" name="password" class="form-control" required>
-            </div>
+            <label>Password</label>
+            <input type="password" name="password" required>
 
-            <button type="submit" class="btn btn-primary w-100">Masuk</button>
+            <button type="submit">Masuk</button>
         </form>
     </div>
 </body>
