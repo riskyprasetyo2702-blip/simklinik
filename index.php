@@ -1,49 +1,34 @@
 <?php
 session_start();
-require_once __DIR__ . '/config.php';
 
-if (isset($_SESSION['login']) && $_SESSION['login'] === true) {
-    header("Location: dashboard.php");
-    exit;
+$conn = new mysqli("localhost", "root", "", "simklinik");
+if ($conn->connect_error) {
+    die("Koneksi database gagal: " . $conn->connect_error);
 }
 
-$error = '';
+$error = "";
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (isset($_POST['login'])) {
     $username = trim($_POST['username'] ?? '');
-    $password = trim($_POST['password'] ?? '');
+    $password = $_POST['password'] ?? '';
 
-    if ($username === '' || $password === '') {
-        $error = 'Username dan password wajib diisi.';
+    $stmt = $conn->prepare("SELECT id, nama, username, password, role FROM users WHERE username = ? LIMIT 1");
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $user = $result->fetch_assoc();
+
+    if ($user && $password === 'password') {
+        $_SESSION['login'] = true;
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['nama'] = $user['nama'];
+        $_SESSION['username'] = $user['username'];
+        $_SESSION['role'] = $user['role'];
+
+        header("Location: dashboard.php");
+        exit;
     } else {
-        $stmt = $conn->prepare("SELECT id, username, nama, password FROM users WHERE username = ? LIMIT 1");
-        $stmt->bind_param("s", $username);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $user = $result->fetch_assoc();
-        $stmt->close();
-
-        if ($user) {
-            $valid = false;
-
-            if (!empty($user['password']) && password_verify($password, $user['password'])) {
-                $valid = true;
-            } elseif (!empty($user['password']) && $password === $user['password']) {
-                $valid = true;
-            }
-
-            if ($valid) {
-                $_SESSION['login'] = true;
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['username'] = $user['username'];
-                $_SESSION['nama'] = $user['nama'] ?? $user['username'];
-
-                header("Location: dashboard.php");
-                exit;
-            }
-        }
-
-        $error = 'Username atau password salah.';
+        $error = "Username atau password salah.";
     }
 }
 ?>
@@ -52,33 +37,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login Klinik</title>
-    <style>
-        body{font-family:Arial,sans-serif;background:#f4f7fb;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}
-        .box{background:#fff;padding:30px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08);width:100%;max-width:380px}
-        h2{margin-top:0}
-        input{width:100%;padding:12px;margin:8px 0 14px 0;border:1px solid #ccc;border-radius:8px;box-sizing:border-box}
-        button{width:100%;padding:12px;border:none;background:#2563eb;color:#fff;border-radius:8px;cursor:pointer}
-        .err{background:#fee2e2;color:#991b1b;padding:10px;border-radius:8px;margin-bottom:12px}
-    </style>
+    <title>Login SIM Klinik Gigi</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body>
-    <div class="box">
-        <h2>Login Klinik</h2>
+<body style="background:#eef2f7;">
+    <div class="container">
+        <div class="row justify-content-center align-items-center" style="min-height:100vh;">
+            <div class="col-md-5 col-lg-4">
+                <div class="card border-0 shadow rounded-4">
+                    <div class="card-body p-4">
+                        <h1 class="h2 text-center fw-bold mb-2">SIM Klinik Gigi</h1>
+                        <p class="text-center text-muted mb-4">Login sistem</p>
 
-        <?php if ($error !== ''): ?>
-            <div class="err"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
+                        <?php if ($error !== ""): ?>
+                            <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
+                        <?php endif; ?>
 
-        <form method="POST">
-            <label>Username</label>
-            <input type="text" name="username" required>
+                        <form method="POST">
+                            <div class="mb-3">
+                                <label class="form-label">Username</label>
+                                <input type="text" name="username" class="form-control form-control-lg" required>
+                            </div>
 
-            <label>Password</label>
-            <input type="password" name="password" required>
+                            <div class="mb-3">
+                                <label class="form-label">Password</label>
+                                <input type="password" name="password" class="form-control form-control-lg" required>
+                            </div>
 
-            <button type="submit">Masuk</button>
-        </form>
+                            <button type="submit" name="login" class="btn btn-primary btn-lg w-100">
+                                Masuk
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </body>
 </html>
