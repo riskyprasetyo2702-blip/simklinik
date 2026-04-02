@@ -1,3 +1,3 @@
 <?php
-require 'config.php';
-echo "DB CONNECTED SUCCESS";
+echo "APP UP";
+exit;
