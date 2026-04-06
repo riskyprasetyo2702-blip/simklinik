@@ -1,177 +1,163 @@
 <?php
-session_start();
-if (!isset($_SESSION['login'])) {
-    header("Location: index.php");
-    exit;
+require_once __DIR__ . '/bootstrap.php';
+
+$keyword = trim($_GET['q'] ?? '');
+$editId = (int)($_GET['edit'] ?? 0);
+
+if ($keyword !== '') {
+    $pasienList = db_fetch_all(
+        "SELECT * FROM pasien WHERE no_rm LIKE ? OR nama LIKE ? OR telepon LIKE ? ORDER BY id DESC",
+        ["%$keyword%", "%$keyword%", "%$keyword%"]
+    );
+} else {
+    $pasienList = db_fetch_all("SELECT * FROM pasien ORDER BY id DESC LIMIT 200");
 }
 
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-
-$conn = new mysqli("localhost", "root", "", "simklinik");
-if ($conn->connect_error) {
-    die("Koneksi gagal: " . $conn->connect_error);
+$editData = null;
+if ($editId > 0) {
+    $editData = db_fetch_one("SELECT * FROM pasien WHERE id = ?", [$editId]);
 }
 
-$error = '';
-$success = '';
-
-if (isset($_POST['simpan'])) {
-    $no_rm = trim($_POST['no_rm'] ?? '');
-    $nama = trim($_POST['nama'] ?? '');
-    $nik = trim($_POST['nik'] ?? '');
-    $jk = trim($_POST['jenis_kelamin'] ?? '');
-    $tanggal_lahir = trim($_POST['tanggal_lahir'] ?? '');
-    $no_hp = trim($_POST['no_hp'] ?? '');
-    $alamat = trim($_POST['alamat'] ?? '');
-
-    if ($no_rm === '' || $nama === '') {
-        $error = "No. Rekam Medis dan Nama Pasien wajib diisi.";
-    } else {
-        $cek = $conn->prepare("SELECT id FROM patients WHERE no_rm = ? LIMIT 1");
-        if (!$cek) {
-            die("Prepare cek pasien gagal: " . $conn->error);
-        }
-        $cek->bind_param("s", $no_rm);
-        $cek->execute();
-        $cekRes = $cek->get_result();
-        $existing = $cekRes->fetch_assoc();
-        $cek->close();
-
-        if ($existing) {
-            $error = "No. Rekam Medis sudah terdaftar.";
-        } else {
-            $tanggal_db = ($tanggal_lahir !== '') ? $tanggal_lahir : null;
-
-            $stmt = $conn->prepare("
-                INSERT INTO patients (no_rm, nama, nik, jenis_kelamin, tanggal_lahir, no_hp, alamat)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ");
-
-            if (!$stmt) {
-                die("Prepare insert pasien gagal: " . $conn->error);
-            }
-
-            $stmt->bind_param("sssssss", $no_rm, $nama, $nik, $jk, $tanggal_db, $no_hp, $alamat);
-
-            if ($stmt->execute()) {
-                header("Location: pasien.php?success=1");
-                exit;
-            } else {
-                $error = "Gagal menyimpan pasien: " . $stmt->error;
-            }
-
-            $stmt->close();
-        }
+function next_rm() {
+    $row = db_fetch_one("SELECT no_rm FROM pasien ORDER BY id DESC LIMIT 1");
+    $num = 1;
+    if (!empty($row['no_rm']) && preg_match('/(\d+)$/', $row['no_rm'], $m)) {
+        $num = ((int)$m[1]) + 1;
     }
-}
-
-if (isset($_GET['success']) && $_GET['success'] == '1') {
-    $success = "Pasien berhasil disimpan.";
-}
-
-$data = $conn->query("SELECT * FROM patients ORDER BY id DESC");
-if (!$data) {
-    die("Query data pasien gagal: " . $conn->error);
+    return 'RM' . str_pad((string)$num, 6, '0', STR_PAD_LEFT);
 }
 ?>
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-    <title>Data Pasien</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Pasien</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f6f8fb;margin:0;color:#1f2937}
+.wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+.card{background:#fff;border-radius:18px;padding:20px;box-shadow:0 8px 24px rgba(0,0,0,.06);margin-bottom:18px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.full{grid-column:1/-1}
+input,select,textarea,button{width:100%;padding:11px 12px;border:1px solid #d1d5db;border-radius:12px;box-sizing:border-box}
+button,.btn{background:#111827;color:#fff;border:none;text-decoration:none;display:inline-block;text-align:center;cursor:pointer}
+.table{width:100%;border-collapse:collapse}.table th,.table td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:14px}
+.actions a{margin-right:6px;text-decoration:none;padding:7px 10px;border-radius:10px;background:#eef2ff;color:#1e3a8a;display:inline-block}.small{font-size:12px;color:#6b7280}
+.topbar{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}.row{display:flex;gap:10px;flex-wrap:wrap}
+@media(max-width:768px){.grid{grid-template-columns:1fr}}
+</style>
 </head>
-<body style="background:#f4f7fb;">
-<div class="container py-4">
-    <div class="d-flex justify-content-between mb-3">
-        <h3>Data Pasien</h3>
-        <a href="dashboard.php" class="btn btn-secondary">Kembali</a>
-    </div>
-
-    <?php if ($error !== ''): ?>
-        <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
-    <?php endif; ?>
-
-    <?php if ($success !== ''): ?>
-        <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
-    <?php endif; ?>
-
-    <div class="card shadow-sm border-0 rounded-4 mb-4">
-        <div class="card-body">
-            <form method="POST" class="row g-3">
-                <div class="col-md-3">
-                    <label class="form-label">No. Rekam Medis</label>
-                    <input class="form-control" name="no_rm" required>
-                </div>
-                <div class="col-md-5">
-                    <label class="form-label">Nama Pasien</label>
-                    <input class="form-control" name="nama" required>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label">NIK</label>
-                    <input class="form-control" name="nik">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label">JK</label>
-                    <select class="form-select" name="jenis_kelamin">
-                        <option value="">-</option>
-                        <option value="L">L</option>
-                        <option value="P">P</option>
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">Tanggal Lahir</label>
-                    <input class="form-control" type="date" name="tanggal_lahir">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">No HP</label>
-                    <input class="form-control" name="no_hp">
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label">Alamat</label>
-                    <input class="form-control" name="alamat">
-                </div>
-                <div class="col-12">
-                    <button class="btn btn-primary" type="submit" name="simpan">Simpan Pasien</button>
-                </div>
-            </form>
+<body>
+<div class="wrap">
+    <div class="topbar">
+        <div>
+            <h1 style="margin:0">Pasien</h1>
+            <div class="small">Alur disamakan dengan versi localhost, disesuaikan ke cloud.</div>
+        </div>
+        <div class="row">
+            <a class="btn" style="padding:11px 16px" href="dashboard.php">Kembali Dashboard</a>
         </div>
     </div>
 
-    <div class="card shadow-sm border-0 rounded-4">
-        <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-bordered align-middle">
-                    <thead>
-                        <tr>
-                            <th>No RM</th>
-                            <th>Nama</th>
-                            <th>NIK</th>
-                            <th>JK</th>
-                            <th>No HP</th>
-                            <th>Aksi</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    <?php while($row = $data->fetch_assoc()): ?>
-                        <tr>
-                            <td><?= htmlspecialchars($row['no_rm']) ?></td>
-                            <td><?= htmlspecialchars($row['nama']) ?></td>
-                            <td><?= htmlspecialchars($row['nik']) ?></td>
-                            <td><?= htmlspecialchars($row['jenis_kelamin']) ?></td>
-                            <td><?= htmlspecialchars($row['no_hp']) ?></td>
-                            <td>
-                                <a href="pasien_edit.php?id=<?= (int)$row['id'] ?>" class="btn btn-sm btn-warning">Ubah</a>
-                                <a href="pasien_delete.php?id=<?= (int)$row['id'] ?>" class="btn btn-sm btn-danger"
-                                   onclick="return confirm('Hapus pasien ini? Riwayat kunjungan juga bisa ikut terhapus.')">Hapus</a>
-                                <a href="pasien_history.php?id=<?= (int)$row['id'] ?>" class="btn btn-sm btn-info text-white">History</a>
-                            </td>
-                        </tr>
-                    <?php endwhile; ?>
-                    </tbody>
-                </table>
+    <div class="card">
+        <?php flash_message(); ?>
+        <form method="get" class="row">
+            <input type="text" name="q" placeholder="Cari no RM / nama / telepon" value="<?= e($keyword) ?>" style="flex:1;min-width:260px">
+            <button type="submit" style="width:auto;padding:0 18px">Cari</button>
+            <a href="pasien.php" class="btn" style="padding:11px 16px;width:auto;background:#4b5563">Reset</a>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2 style="margin-top:0"><?= $editData ? 'Edit Pasien' : 'Tambah Pasien' ?></h2>
+        <form method="post" action="simpan_pasien.php">
+            <input type="hidden" name="id" value="<?= (int)($editData['id'] ?? 0) ?>">
+            <div class="grid">
+                <div>
+                    <label>No. RM</label>
+                    <input type="text" name="no_rm" required value="<?= e($editData['no_rm'] ?? next_rm()) ?>">
+                </div>
+                <div>
+                    <label>NIK</label>
+                    <input type="text" name="nik" value="<?= e($editData['nik'] ?? '') ?>">
+                </div>
+                <div>
+                    <label>Nama Pasien</label>
+                    <input type="text" name="nama" required value="<?= e($editData['nama'] ?? '') ?>">
+                </div>
+                <div>
+                    <label>Jenis Kelamin</label>
+                    <select name="jk">
+                        <option value="L" <?= (($editData['jk'] ?? '') === 'L') ? 'selected' : '' ?>>Laki-laki</option>
+                        <option value="P" <?= (($editData['jk'] ?? '') === 'P') ? 'selected' : '' ?>>Perempuan</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Tempat Lahir</label>
+                    <input type="text" name="tempat_lahir" value="<?= e($editData['tempat_lahir'] ?? '') ?>">
+                </div>
+                <div>
+                    <label>Tanggal Lahir</label>
+                    <input type="date" name="tanggal_lahir" value="<?= e($editData['tanggal_lahir'] ?? '') ?>">
+                </div>
+                <div>
+                    <label>Telepon</label>
+                    <input type="text" name="telepon" value="<?= e($editData['telepon'] ?? '') ?>">
+                </div>
+                <div class="full">
+                    <label>Alamat</label>
+                    <textarea name="alamat" rows="3"><?= e($editData['alamat'] ?? '') ?></textarea>
+                </div>
+                <div class="full">
+                    <label>Alergi / Catatan Penting</label>
+                    <textarea name="alergi" rows="2"><?= e($editData['alergi'] ?? '') ?></textarea>
+                </div>
             </div>
+            <div class="row" style="margin-top:14px">
+                <button type="submit" style="width:auto;padding:11px 16px">Simpan Pasien</button>
+                <?php if ($editData): ?>
+                    <a href="pasien.php" class="btn" style="padding:11px 16px;width:auto;background:#6b7280">Batal Edit</a>
+                <?php endif; ?>
+            </div>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2 style="margin-top:0">Daftar Pasien</h2>
+        <div style="overflow:auto">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>No RM</th>
+                        <th>Nama</th>
+                        <th>JK</th>
+                        <th>Telepon</th>
+                        <th>Tanggal Lahir</th>
+                        <th>Aksi</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($pasienList as $p): ?>
+                    <tr>
+                        <td><?= e($p['no_rm']) ?></td>
+                        <td>
+                            <strong><?= e($p['nama']) ?></strong><br>
+                            <span class="small"><?= e($p['alamat']) ?></span>
+                        </td>
+                        <td><?= e($p['jk']) ?></td>
+                        <td><?= e($p['telepon']) ?></td>
+                        <td><?= e($p['tanggal_lahir']) ?></td>
+                        <td class="actions">
+                            <a href="pasien.php?edit=<?= (int)$p['id'] ?>">Edit</a>
+                            <a href="kunjungan.php?pasien_id=<?= (int)$p['id'] ?>">Kunjungan</a>
+                            <a href="invoice.php?pasien_id=<?= (int)$p['id'] ?>">Invoice</a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if (!$pasienList): ?>
+                    <tr><td colspan="6">Belum ada data pasien.</td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
         </div>
     </div>
 </div>

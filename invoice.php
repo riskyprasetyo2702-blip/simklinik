@@ -1,528 +1,218 @@
 <?php
-session_start();
-if (!isset($_SESSION['login'])) {
-    header("Location: index.php");
-    exit;
+require_once __DIR__ . '/bootstrap.php';
+
+$pasienId = (int)($_GET['pasien_id'] ?? 0);
+$kunjunganId = (int)($_GET['kunjungan_id'] ?? 0);
+$editId = (int)($_GET['edit'] ?? 0);
+
+$pasien = $pasienId > 0 ? db_fetch_one("SELECT * FROM pasien WHERE id=?", [$pasienId]) : null;
+$kunjungan = $kunjunganId > 0 ? db_fetch_one("SELECT * FROM kunjungan WHERE id=?", [$kunjunganId]) : null;
+
+$editData = null;
+$editItems = [];
+if ($editId > 0) {
+    $editData = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$editId]);
+    if ($editData) {
+        $pasienId = (int)$editData['pasien_id'];
+        $kunjunganId = (int)$editData['kunjungan_id'];
+        $pasien = db_fetch_one("SELECT * FROM pasien WHERE id=?", [$pasienId]);
+        if ($kunjunganId > 0) $kunjungan = db_fetch_one("SELECT * FROM kunjungan WHERE id=?", [$kunjunganId]);
+        $editItems = db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC", [$editId]);
+    }
 }
 
-require_once 'config.php';
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
-
-$conn = new mysqli("localhost", "root", "", "simklinik");
-if ($conn->connect_error) {
-    die("Koneksi gagal: " . $conn->connect_error);
+function next_invoice_no() {
+    $date = date('Ymd');
+    $row = db_fetch_one("SELECT no_invoice FROM invoice WHERE no_invoice LIKE ? ORDER BY id DESC LIMIT 1", ["INV-$date-%"]);
+    $num = 1;
+    if (!empty($row['no_invoice']) && preg_match('/-(\d+)$/', $row['no_invoice'], $m)) {
+        $num = ((int)$m[1]) + 1;
+    }
+    return 'INV-' . $date . '-' . str_pad((string)$num, 4, '0', STR_PAD_LEFT);
 }
 
-/*
-|--------------------------------------------------------------------------
-| FUNCTION HITUNG ULANG TOTAL INVOICE
-|--------------------------------------------------------------------------
-*/
-function hitungUlangInvoice($conn, $invoice_id) {
-    $invoice_id = (int)$invoice_id;
-
-    $sum = $conn->query("
-        SELECT COALESCE(SUM(subtotal), 0) AS subtotal_items
-        FROM invoice_items
-        WHERE invoice_id = $invoice_id
-    ")->fetch_assoc();
-
-    $inv = $conn->query("
-        SELECT COALESCE(diskon, 0) AS diskon
-        FROM invoices
-        WHERE id = $invoice_id
-        LIMIT 1
-    ")->fetch_assoc();
-
-    $subtotal = (float)($sum['subtotal_items'] ?? 0);
-    $diskon = (float)($inv['diskon'] ?? 0);
-    $total = $subtotal - $diskon;
-
-    if ($total < 0) {
-        $total = 0;
-    }
-
-    $stmt = $conn->prepare("
-        UPDATE invoices
-        SET subtotal = ?, total = ?
-        WHERE id = ?
-    ");
-    $stmt->bind_param("ddi", $subtotal, $total, $invoice_id);
-    $stmt->execute();
-    $stmt->close();
-}
-
-/*
-|--------------------------------------------------------------------------
-| TAMBAH ITEM MANUAL
-|--------------------------------------------------------------------------
-*/
-if (isset($_POST['tambah_item'])) {
-    $invoice_id = (int)($_POST['invoice_id'] ?? 0);
-    $treatment_id = (int)($_POST['treatment_id'] ?? 0);
-    $qty = (int)($_POST['qty'] ?? 1);
-
-    if ($invoice_id > 0 && $treatment_id > 0) {
-        if ($qty < 1) {
-            $qty = 1;
-        }
-
-        $stmt = $conn->prepare("
-            SELECT harga
-            FROM treatments
-            WHERE id = ?
-            LIMIT 1
-        ");
-        $stmt->bind_param("i", $treatment_id);
-        $stmt->execute();
-        $treatment = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-
-        if ($treatment) {
-            $harga = (float)$treatment['harga'];
-            $subtotal = $qty * $harga;
-
-            $stmt = $conn->prepare("
-                INSERT INTO invoice_items
-                    (invoice_id, treatment_id, qty, harga, subtotal, sumber)
-                VALUES
-                    (?, ?, ?, ?, ?, 'manual')
-            ");
-            $stmt->bind_param("iiidd", $invoice_id, $treatment_id, $qty, $harga, $subtotal);
-            $stmt->execute();
-            $stmt->close();
-
-            hitungUlangInvoice($conn, $invoice_id);
-        }
-    }
-
-    header("Location: invoice.php");
-    exit;
-}
-
-/*
-|--------------------------------------------------------------------------
-| SIMPAN PENGATURAN INVOICE
-|--------------------------------------------------------------------------
-*/
-if (isset($_POST['update_invoice'])) {
-    $invoice_id = (int)($_POST['invoice_id'] ?? 0);
-    $diskon = (float)($_POST['diskon'] ?? 0);
-    $metode_bayar = $_POST['metode_bayar'] ?? '';
-    $catatan = $_POST['catatan'] ?? '';
-
-    if ($diskon < 0) $diskon = 0;
-
-    $stmt = $conn->prepare("
-        UPDATE invoices
-        SET diskon = ?, metode_bayar = ?, catatan = ?
-        WHERE id = ?
-    ");
-
-    // PENTING: dssi (bukan salah urutan)
-    $stmt->bind_param("dssi", $diskon, $metode_bayar, $catatan, $invoice_id);
-
-    if (!$stmt->execute()) {
-        die("ERROR update: " . $stmt->error);
-    }
-
-    $stmt->close();
-
-    hitungUlangInvoice($conn, $invoice_id);
-
-    header("Location: invoice.php");
-    exit;
-
-}
-
-/*
-|--------------------------------------------------------------------------
-| UBAH STATUS MANUAL
-|--------------------------------------------------------------------------
-*/
-if (isset($_POST['set_status'])) {
-    $invoice_id = (int)($_POST['invoice_id'] ?? 0);
-    $status_bayar = trim($_POST['status_bayar'] ?? 'pending');
-
-    if (in_array($status_bayar, ['pending', 'lunas', 'tidak_terbayar'], true)) {
-        $stmt = $conn->prepare("
-            UPDATE invoices
-            SET status_bayar = ?
-            WHERE id = ?
-        ");
-        $stmt->bind_param("si", $status_bayar, $invoice_id);
-        $stmt->execute();
-        $stmt->close();
-    }
-
-    header("Location: invoice.php");
-    exit;
-}
-
-/*
-|--------------------------------------------------------------------------
-| FINAL INVOICE -> LUNAS + MASUK KEUANGAN + REDIRECT DASHBOARD
-|--------------------------------------------------------------------------
-*/
-if (isset($_POST['final_invoice'])) {
-    $invoice_id = (int)($_POST['invoice_id'] ?? 0);
-    $diskon = (float)($_POST['diskon'] ?? 0);
-    $metode_bayar = $_POST['metode_bayar'] ?? '';
-    $catatan = $_POST['catatan'] ?? '';
-
-    if ($diskon < 0) $diskon = 0;
-
-    // UPDATE INVOICE
-    $stmt = $conn->prepare("
-        UPDATE invoices
-        SET diskon = ?, metode_bayar = ?, catatan = ?, status_bayar = 'lunas'
-        WHERE id = ?
-    ");
-
-    $stmt->bind_param("dssi", $diskon, $metode_bayar, $catatan, $invoice_id);
-
-    if (!$stmt->execute()) {
-        die("ERROR update invoice: " . $stmt->error);
-    }
-
-    $stmt->close();
-
-    // HITUNG ULANG TOTAL
-    hitungUlangInvoice($conn, $invoice_id);
-
-    // AMBIL TOTAL
-    $stmt = $conn->prepare("SELECT total, visit_id FROM invoices WHERE id = ?");
-    $stmt->bind_param("i", $invoice_id);
-    $stmt->execute();
-    $inv = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    if (!$inv) {
-        die("Invoice tidak ditemukan");
-    }
-
-    $total = (float)$inv['total'];
-    $visit_id = (int)$inv['visit_id'];
-
-    // AMBIL PATIENT
-    $stmt = $conn->prepare("SELECT patient_id FROM visits WHERE id = ?");
-    $stmt->bind_param("i", $visit_id);
-    $stmt->execute();
-    $visit = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    $patient_id = (int)($visit['patient_id'] ?? 0);
-
-    // CEK SUDAH MASUK KEUANGAN ATAU BELUM
-    $stmt = $conn->prepare("SELECT id FROM keuangan WHERE invoice_id = ?");
-    $stmt->bind_param("i", $invoice_id);
-    $stmt->execute();
-    $cek = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    if (!$cek) {
-        $desc = "Pembayaran pasien";
-
-        $stmt = $conn->prepare("
-            INSERT INTO keuangan
-            (tanggal, jenis, deskripsi, nominal, invoice_id, patient_id)
-            VALUES (NOW(), 'pemasukan', ?, ?, ?, ?)
-        ");
-
-        $stmt->bind_param("sdii", $desc, $total, $invoice_id, $patient_id);
-
-        if (!$stmt->execute()) {
-            die("ERROR keuangan: " . $stmt->error);
-        }
-
-        $stmt->close();
-    }
-
-    // REDIRECT
-    header("Location: dashboard.php");
-    exit;
-}
-
-/*
-|--------------------------------------------------------------------------
-| AMBIL DATA
-|--------------------------------------------------------------------------
-*/
-$invoices = $conn->query("
-    SELECT
-        i.*,
-        p.nama AS nama_pasien,
-        p.no_rm
-    FROM invoices i
-    JOIN visits v ON v.id = i.visit_id
-    JOIN patients p ON p.id = v.patient_id
-    ORDER BY i.id DESC
-");
-
-$treatments = $conn->query("
-    SELECT *
-    FROM treatments
-    ORDER BY kategori ASC, nama_tindakan ASC
-");
+$pasienList = db_fetch_all("SELECT id, no_rm, nama FROM pasien ORDER BY nama ASC");
+$kunjunganList = $pasienId > 0 ? db_fetch_all("SELECT id, tanggal, diagnosa, tindakan FROM kunjungan WHERE pasien_id = ? ORDER BY tanggal DESC", [$pasienId]) : [];
+$invoiceList = $pasienId > 0
+    ? db_fetch_all("SELECT i.*, p.no_rm, p.nama FROM invoice i JOIN pasien p ON p.id=i.pasien_id WHERE i.pasien_id=? ORDER BY i.tanggal DESC", [$pasienId])
+    : db_fetch_all("SELECT i.*, p.no_rm, p.nama FROM invoice i JOIN pasien p ON p.id=i.pasien_id ORDER BY i.tanggal DESC LIMIT 100");
 ?>
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Invoice - <?= NAMA_KLINIK ?></title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body {
-            background: #eef2f7;
-        }
-        .card-soft {
-            border: 0;
-            border-radius: 22px;
-            box-shadow: 0 10px 28px rgba(0,0,0,.06);
-        }
-        .summary-box {
-            background: #f8fafc;
-            border-radius: 16px;
-            padding: 14px;
-            height: 100%;
-        }
-        .table th {
-            white-space: nowrap;
-        }
-        .section-title {
-            font-weight: 700;
-            margin-bottom: 12px;
-        }
-    </style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f6f8fb;margin:0;color:#1f2937}.wrap{max-width:1280px;margin:24px auto;padding:0 16px}.card{background:#fff;border-radius:18px;padding:20px;box-shadow:0 8px 24px rgba(0,0,0,.06);margin-bottom:18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.full{grid-column:1/-1}input,select,textarea,button{width:100%;padding:11px 12px;border:1px solid #d1d5db;border-radius:12px;box-sizing:border-box}button,.btn{background:#111827;color:#fff;border:none;text-decoration:none;display:inline-block;text-align:center;cursor:pointer}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:14px}.small{font-size:12px;color:#6b7280}.actions a{margin-right:6px;text-decoration:none;padding:7px 10px;border-radius:10px;background:#eef2ff;color:#1e3a8a;display:inline-block}.row{display:flex;gap:10px;flex-wrap:wrap}.item-row{display:grid;grid-template-columns:2fr .8fr 1fr 1fr auto;gap:10px;margin-bottom:10px}@media(max-width:900px){.grid,.item-row{grid-template-columns:1fr}}
+</style>
+<script>
+function formatNumberInput(v){ return parseFloat(v||0) || 0; }
+function hitungTotal(){
+    let subtotal = 0;
+    document.querySelectorAll('.item-row').forEach(function(row){
+        const qty = formatNumberInput(row.querySelector('.qty').value);
+        const harga = formatNumberInput(row.querySelector('.harga').value);
+        const st = qty * harga;
+        row.querySelector('.subtotal').value = st.toFixed(2);
+        subtotal += st;
+    });
+    document.getElementById('subtotal').value = subtotal.toFixed(2);
+    const diskon = formatNumberInput(document.getElementById('diskon').value);
+    document.getElementById('total').value = Math.max(0, subtotal - diskon).toFixed(2);
+}
+function tambahItem(nama='', qty='1', harga='0', subtotal='0', ket=''){
+    const wrap = document.getElementById('items-wrap');
+    const div = document.createElement('div');
+    div.className = 'item-row';
+    div.innerHTML = `
+        <input type="text" name="nama_item[]" placeholder="Nama tindakan / item" value="${nama}">
+        <input type="number" step="0.01" class="qty" name="qty[]" value="${qty}" oninput="hitungTotal()">
+        <input type="number" step="0.01" class="harga" name="harga[]" value="${harga}" oninput="hitungTotal()">
+        <input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="${subtotal}" readonly>
+        <button type="button" onclick="this.parentElement.remove();hitungTotal()" style="background:#dc2626">Hapus</button>
+        <input type="text" name="keterangan_item[]" placeholder="Keterangan item" value="${ket}" style="grid-column:1/-1">
+    `;
+    wrap.appendChild(div);
+    hitungTotal();
+}
+window.addEventListener('DOMContentLoaded', function(){
+    if(document.querySelectorAll('.item-row').length===0){ tambahItem(); }
+    hitungTotal();
+});
+</script>
 </head>
 <body>
-<div class="container py-4">
-
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h3 class="mb-0">💰 <?= NAMA_KLINIK ?></h3>
-        <a href="dashboard.php" class="btn btn-secondary">Kembali</a>
+<div class="wrap">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div>
+            <h1 style="margin:0">Invoice</h1>
+            <div class="small"><?= $pasien ? 'Pasien: ' . e($pasien['no_rm']) . ' - ' . e($pasien['nama']) : 'Semua invoice' ?></div>
+        </div>
+        <div class="row">
+            <a class="btn" style="padding:11px 16px" href="pasien.php">Pasien</a>
+            <a class="btn" style="padding:11px 16px;background:#4b5563" href="dashboard.php">Dashboard</a>
+        </div>
     </div>
 
-    <?php if ($invoices->num_rows > 0): ?>
-        <?php while($inv = $invoices->fetch_assoc()): ?>
-            <div class="card card-soft mb-4">
-                <div class="card-body">
-
-                    <div class="row g-3 mb-3">
-                        <div class="col-lg-4">
-                            <div class="summary-box">
-                                <div><strong>No Invoice:</strong> <?= htmlspecialchars($inv['nomor_invoice']) ?></div>
-                                <div><strong>No RM:</strong> <?= htmlspecialchars($inv['no_rm'] ?? '-') ?></div>
-                                <div><strong>Pasien:</strong> <?= htmlspecialchars($inv['nama_pasien']) ?></div>
-                                <div><strong>Tanggal:</strong> <?= htmlspecialchars($inv['tanggal_invoice']) ?></div>
-                            </div>
-                        </div>
-
-                        <div class="col-lg-4">
-                            <div class="summary-box">
-                                <div><strong>Status:</strong>
-                                    <?php if ($inv['status_bayar'] === 'lunas'): ?>
-                                        <span class="badge bg-success">Lunas</span>
-                                    <?php elseif ($inv['status_bayar'] === 'pending'): ?>
-                                        <span class="badge bg-warning text-dark">Pending</span>
-                                    <?php elseif ($inv['status_bayar'] === 'tidak_terbayar'): ?>
-                                        <span class="badge bg-danger">Tidak Terbayar</span>
-                                    <?php else: ?>
-                                        <span class="badge bg-secondary"><?= htmlspecialchars($inv['status_bayar']) ?></span>
-                                    <?php endif; ?>
-                                </div>
-                                <div><strong>Metode Bayar:</strong> <?= htmlspecialchars($inv['metode_bayar'] ?: '-') ?></div>
-                                <div><strong>Catatan:</strong> <?= htmlspecialchars($inv['catatan'] ?: '-') ?></div>
-                            </div>
-                        </div>
-
-                        <div class="col-lg-4">
-                            <div class="summary-box">
-                                <div><strong>Subtotal:</strong> Rp <?= number_format((float)$inv['subtotal'],0,',','.') ?></div>
-                                <div><strong>Diskon:</strong> Rp <?= number_format((float)$inv['diskon'],0,',','.') ?></div>
-                                <div class="mt-2"><strong>Total Akhir:</strong></div>
-                                <h4 class="mb-0">Rp <?= number_format((float)$inv['total'],0,',','.') ?></h4>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="table-responsive mb-3">
-                        <table class="table table-bordered align-middle">
-                            <thead>
-                                <tr>
-                                    <th>Tindakan</th>
-                                    <th>Gigi</th>
-                                    <th>Surface</th>
-                                    <th>Sumber</th>
-                                    <th>Qty</th>
-                                    <th>Harga</th>
-                                    <th>Subtotal</th>
-                                    <th>Aksi</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            <?php
-                            $invoice_id = (int)$inv['id'];
-                            $items = $conn->query("
-                                SELECT ii.*, COALESCE(ii.nama_tindakan, t.nama_tindakan) AS nama_tindakan
-                                FROM invoice_items ii
-                                LEFT JOIN treatments t ON t.id = ii.treatment_id
-                                WHERE ii.invoice_id = $invoice_id
-                                ORDER BY ii.id ASC
-                            ");
-                            ?>
-                            <?php if ($items->num_rows > 0): ?>
-                                <?php while($item = $items->fetch_assoc()): ?>
-                                    <tr>
-                                        <td><?= htmlspecialchars($item['nama_tindakan']) ?></td>
-                                        <td><?= htmlspecialchars($item['tooth_number'] ?? '-') ?></td>
-                                        <td><?= htmlspecialchars($item['surface_code'] ?? '-') ?></td>
-                                        <td><?= htmlspecialchars($item['sumber'] ?? '-') ?></td>
-                                        <td><?= htmlspecialchars($item['qty']) ?></td>
-                                        <td>Rp <?= number_format((float)$item['harga'],0,',','.') ?></td>
-                                        <td>Rp <?= number_format((float)$item['subtotal'],0,',','.') ?></td>
-                                        <td>
-                                            <a href="invoice_edit_item.php?id=<?= $item['id'] ?>" class="btn btn-sm btn-warning">Edit</a>
-                                            <a href="invoice_delete_item.php?id=<?= $item['id'] ?>" class="btn btn-sm btn-danger"
-                                               onclick="return confirm('Hapus item ini?')">Hapus</a>
-                                        </td>
-                                    </tr>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <tr>
-                                    <td colspan="8" class="text-center">Belum ada item invoice.</td>
-                                </tr>
-                            <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="row g-3">
-                        <div class="col-lg-6">
-                            <div class="card border-0 bg-light">
-                                <div class="card-body">
-                                    <div class="section-title">Tambah Item Manual</div>
-                                    <form method="POST" class="row g-2">
-                                        <input type="hidden" name="invoice_id" value="<?= $inv['id'] ?>">
-
-                                        <div class="col-md-7">
-                                            <select name="treatment_id" class="form-select" required>
-                                                <option value="">Pilih tindakan</option>
-                                                <?php
-                                                $treatments->data_seek(0);
-                                                while($t = $treatments->fetch_assoc()):
-                                                ?>
-                                                    <option value="<?= $t['id'] ?>">
-                                                        <?= htmlspecialchars($t['nama_tindakan']) ?> (Rp <?= number_format((float)$t['harga'],0,',','.') ?>)
-                                                    </option>
-                                                <?php endwhile; ?>
-                                            </select>
-                                        </div>
-
-                                        <div class="col-md-2">
-                                            <input type="number" name="qty" class="form-control" value="1" min="1">
-                                        </div>
-
-                                        <div class="col-md-3">
-                                            <button name="tambah_item" class="btn btn-primary w-100">Tambah</button>
-                                        </div>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="col-lg-6">
-                            <div class="card border-0 bg-light">
-                                <div class="card-body">
-                                    <div class="section-title">Pengaturan Invoice</div>
-
-                                    <form method="POST" class="row g-2">
-                                        <input type="hidden" name="invoice_id" value="<?= $inv['id'] ?>">
-
-                                        <div class="col-md-4">
-                                            <label class="form-label">Diskon Nominal</label>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                min="0"
-                                                name="diskon"
-                                                class="form-control"
-                                                value="<?= htmlspecialchars((float)$inv['diskon']) ?>"
-                                            >
-                                        </div>
-
-                                        <div class="col-md-4">
-                                            <label class="form-label">Metode Bayar</label>
-                                            <select name="metode_bayar" class="form-select">
-                                                <option value="">- Pilih -</option>
-                                                <option value="cash" <?= ($inv['metode_bayar'] === 'cash') ? 'selected' : '' ?>>Cash</option>
-                                                <option value="transfer" <?= ($inv['metode_bayar'] === 'transfer') ? 'selected' : '' ?>>Transfer</option>
-                                                <option value="qris" <?= ($inv['metode_bayar'] === 'qris') ? 'selected' : '' ?>>QRIS</option>
-                                                <option value="debit" <?= ($inv['metode_bayar'] === 'debit') ? 'selected' : '' ?>>Debit</option>
-                                            </select>
-                                        </div>
-
-                                        <div class="col-md-4">
-                                            <label class="form-label">Status Bayar</label>
-                                            <select class="form-select" disabled>
-                                                <option><?= htmlspecialchars($inv['status_bayar']) ?></option>
-                                            </select>
-                                        </div>
-
-                                        <div class="col-12">
-                                            <label class="form-label">Catatan</label>
-                                            <textarea name="catatan" class="form-control" rows="2"><?= htmlspecialchars($inv['catatan'] ?? '') ?></textarea>
-                                        </div>
-
-                                        <div class="col-12 d-flex gap-2 flex-wrap">
-                                            <button name="update_invoice" class="btn btn-dark">Simpan Pengaturan</button>
-                                            <button name="final_invoice" class="btn btn-success">Selesai</button>
-                                        </div>
-                                    </form>
-
-                                    <div class="mt-3 d-flex gap-2 flex-wrap">
-                                        <form method="POST">
-                                            <input type="hidden" name="invoice_id" value="<?= $inv['id'] ?>">
-                                            <input type="hidden" name="status_bayar" value="lunas">
-                                            <button name="set_status" class="btn btn-success btn-sm">Lunas</button>
-                                        </form>
-
-                                        <form method="POST">
-                                            <input type="hidden" name="invoice_id" value="<?= $inv['id'] ?>">
-                                            <input type="hidden" name="status_bayar" value="pending">
-                                            <button name="set_status" class="btn btn-warning btn-sm">Pending</button>
-                                        </form>
-
-                                        <form method="POST">
-                                            <input type="hidden" name="invoice_id" value="<?= $inv['id'] ?>">
-                                            <input type="hidden" name="status_bayar" value="tidak_terbayar">
-                                            <button name="set_status" class="btn btn-danger btn-sm">Tidak Terbayar</button>
-                                        </form>
-
-                                        <a href="invoice_print.php?id=<?= $inv['id'] ?>" class="btn btn-outline-success btn-sm">Print A4</a>
-                                        <a href="invoice_struk.php?id=<?= $inv['id'] ?>" class="btn btn-outline-dark btn-sm">Struk</a>
-                                        <a href="invoice_pdf.php?id=<?= $inv['id'] ?>" class="btn btn-outline-primary btn-sm">PDF</a>
-                                        <a href="invoice_delete.php?id=<?= $inv['id'] ?>" class="btn btn-outline-danger btn-sm"
-                                           onclick="return confirm('Hapus invoice ini?')">Hapus Invoice</a>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
+    <div class="card">
+        <?php flash_message(); ?>
+        <h2 style="margin-top:0"><?= $editData ? 'Edit Invoice' : 'Buat Invoice' ?></h2>
+        <form method="post" action="simpan_invoice.php">
+            <input type="hidden" name="id" value="<?= (int)($editData['id'] ?? 0) ?>">
+            <div class="grid">
+                <div>
+                    <label>No Invoice</label>
+                    <input type="text" name="no_invoice" required value="<?= e($editData['no_invoice'] ?? next_invoice_no()) ?>">
+                </div>
+                <div>
+                    <label>Tanggal</label>
+                    <input type="datetime-local" name="tanggal" required value="<?= e(isset($editData['tanggal']) ? date('Y-m-d\TH:i', strtotime($editData['tanggal'])) : date('Y-m-d\TH:i')) ?>">
+                </div>
+                <div>
+                    <label>Pasien</label>
+                    <select name="pasien_id" required onchange="window.location='invoice.php?pasien_id='+this.value">
+                        <option value="">Pilih pasien</option>
+                        <?php foreach ($pasienList as $p): ?>
+                            <option value="<?= (int)$p['id'] ?>" <?= ((int)($editData['pasien_id'] ?? $pasienId) === (int)$p['id']) ? 'selected' : '' ?>><?= e($p['no_rm']) ?> - <?= e($p['nama']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label>Kunjungan</label>
+                    <select name="kunjungan_id">
+                        <option value="">Tanpa kunjungan</option>
+                        <?php foreach ($kunjunganList as $k): ?>
+                            <option value="<?= (int)$k['id'] ?>" <?= ((int)($editData['kunjungan_id'] ?? $kunjunganId) === (int)$k['id']) ? 'selected' : '' ?>><?= e($k['tanggal']) ?> - <?= e($k['diagnosa'] ?: $k['tindakan']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label>Status Pembayaran</label>
+                    <select name="status_bayar">
+                        <?php $sb = $editData['status_bayar'] ?? 'belum terbayar'; foreach (['lunas','pending','belum terbayar'] as $s): ?>
+                        <option value="<?= e($s) ?>" <?= $sb === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label>Metode Pembayaran</label>
+                    <select name="metode_bayar">
+                        <?php $mb = $editData['metode_bayar'] ?? 'tunai'; foreach (['tunai','transfer','debit','kartu kredit','qris'] as $m): ?>
+                        <option value="<?= e($m) ?>" <?= $mb === $m ? 'selected' : '' ?>><?= strtoupper($m) ?></option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
             </div>
-        <?php endwhile; ?>
-    <?php else: ?>
-        <div class="card card-soft">
-            <div class="card-body text-center py-5">
-                Belum ada invoice.
-            </div>
-        </div>
-    <?php endif; ?>
 
+            <div class="card" style="margin-top:16px;background:#f9fafb">
+                <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">
+                    <h3 style="margin:0">Item Invoice</h3>
+                    <button type="button" onclick="tambahItem()" style="width:auto;padding:11px 16px">Tambah Item</button>
+                </div>
+                <div id="items-wrap">
+                    <?php foreach ($editItems as $it): ?>
+                    <div class="item-row">
+                        <input type="text" name="nama_item[]" placeholder="Nama tindakan / item" value="<?= e($it['nama_item']) ?>">
+                        <input type="number" step="0.01" class="qty" name="qty[]" value="<?= e($it['qty']) ?>" oninput="hitungTotal()">
+                        <input type="number" step="0.01" class="harga" name="harga[]" value="<?= e($it['harga']) ?>" oninput="hitungTotal()">
+                        <input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="<?= e($it['subtotal']) ?>" readonly>
+                        <button type="button" onclick="this.parentElement.remove();hitungTotal()" style="background:#dc2626">Hapus</button>
+                        <input type="text" name="keterangan_item[]" placeholder="Keterangan item" value="<?= e($it['keterangan']) ?>" style="grid-column:1/-1">
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+
+            <div class="grid">
+                <div>
+                    <label>Subtotal</label>
+                    <input type="number" step="0.01" id="subtotal" name="subtotal" readonly value="<?= e($editData['subtotal'] ?? '0') ?>">
+                </div>
+                <div>
+                    <label>Diskon</label>
+                    <input type="number" step="0.01" id="diskon" name="diskon" oninput="hitungTotal()" value="<?= e($editData['diskon'] ?? '0') ?>">
+                </div>
+                <div>
+                    <label>Total</label>
+                    <input type="number" step="0.01" id="total" name="total" readonly value="<?= e($editData['total'] ?? '0') ?>">
+                </div>
+                <div class="full">
+                    <label>Catatan</label>
+                    <textarea name="catatan" rows="3"><?= e($editData['catatan'] ?? '') ?></textarea>
+                </div>
+            </div>
+            <div class="row" style="margin-top:16px">
+                <button type="submit" style="width:auto;padding:11px 16px">Simpan Invoice</button>
+                <?php if ($editData): ?><a class="btn" style="padding:11px 16px;width:auto;background:#2563eb" href="invoice_pdf.php?id=<?= (int)$editData['id'] ?>" target="_blank">Cetak PDF / Print</a><?php endif; ?>
+            </div>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2 style="margin-top:0">Riwayat Invoice</h2>
+        <div style="overflow:auto">
+            <table class="table">
+                <thead><tr><th>No Invoice</th><th>Tanggal</th><th>Pasien</th><th>Total</th><th>Status</th><th>Metode</th><th>Aksi</th></tr></thead>
+                <tbody>
+                <?php foreach ($invoiceList as $inv): ?>
+                    <tr>
+                        <td><?= e($inv['no_invoice']) ?></td>
+                        <td><?= e($inv['tanggal']) ?></td>
+                        <td><strong><?= e($inv['no_rm']) ?></strong><br><?= e($inv['nama']) ?></td>
+                        <td>Rp <?= number_format((float)$inv['total'], 0, ',', '.') ?></td>
+                        <td><?= e($inv['status_bayar']) ?></td>
+                        <td><?= e($inv['metode_bayar']) ?></td>
+                        <td class="actions">
+                            <a href="invoice.php?edit=<?= (int)$inv['id'] ?>">Edit</a>
+                            <a href="invoice_pdf.php?id=<?= (int)$inv['id'] ?>" target="_blank">Print</a>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if (!$invoiceList): ?><tr><td colspan="7">Belum ada invoice.</td></tr><?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 </body>
 </html>
