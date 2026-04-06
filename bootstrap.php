@@ -180,3 +180,56 @@ function flash_message()
         unset($_SESSION['error']);
     }
 }
+function db_fetch_all($query, $params = [])
+{
+    $conn = db();
+    if (!$conn) {
+        return [];
+    }
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) {
+        return [];
+    }
+
+    if (!empty($params)) {
+        $types = str_repeat('s', count($params));
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $rows = [];
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+    }
+
+    $stmt->close();
+    return $rows;
+}
+
+function db_fetch_one($query, $params = [])
+{
+    $rows = db_fetch_all($query, $params);
+    return $rows[0] ?? null;
+}
+
+function flash_message()
+{
+    if (!empty($_SESSION['success'])) {
+        echo '<div style="background:#dcfce7;color:#166534;padding:12px 14px;border-radius:12px;margin-bottom:14px;">'
+            . e($_SESSION['success']) .
+            '</div>';
+        unset($_SESSION['success']);
+    }
+
+    if (!empty($_SESSION['error'])) {
+        echo '<div style="background:#fee2e2;color:#991b1b;padding:12px 14px;border-radius:12px;margin-bottom:14px;">'
+            . e($_SESSION['error']) .
+            '</div>';
+        unset($_SESSION['error']);
+    }
+}
