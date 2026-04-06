@@ -8,8 +8,8 @@ require_once __DIR__ . '/config.php';
 const KLINIK_NAMA = 'Klinik Praktek Mandiri Dokter Gigi Andreas Aryo Risky Prasetyo';
 const KLINIK_ALAMAT = 'Alamat klinik dapat diatur di bootstrap.php';
 const KLINIK_TELP = 'Telp dapat diatur di bootstrap.php';
-const QRIS_IMAGE_URL = ''; // isi URL gambar QRIS jika ada
-const QRIS_PAYLOAD = '';   // isi string QRIS statis jika ingin ditampilkan
+const QRIS_IMAGE_URL = '';
+const QRIS_PAYLOAD = '';
 
 function db() {
     global $conn, $koneksi, $mysqli, $db;
@@ -21,7 +21,12 @@ function db() {
 }
 
 function ensure_logged_in() {
-    if (!isset($_SESSION['user_id']) && !isset($_SESSION['username']) && !isset($_SESSION['nama']) && !isset($_SESSION['user'])) {
+    if (
+        !isset($_SESSION['user_id']) &&
+        !isset($_SESSION['username']) &&
+        !isset($_SESSION['nama']) &&
+        !isset($_SESSION['user'])
+    ) {
         header('Location: login.php');
         exit;
     }
@@ -39,11 +44,11 @@ function e($str) {
 
 function flash_message() {
     if (!empty($_SESSION['success'])) {
-        echo '<div style="background:#dcfce7;color:#166534;padding:12px 14px;border-radius:12px;margin-bottom:14px;border:1px solid #86efac">'.e($_SESSION['success']).'</div>';
+        echo '<div style="background:#dcfce7;color:#166534;padding:12px 14px;border-radius:12px;margin-bottom:14px;border:1px solid #86efac">' . e($_SESSION['success']) . '</div>';
         unset($_SESSION['success']);
     }
     if (!empty($_SESSION['error'])) {
-        echo '<div style="background:#fee2e2;color:#991b1b;padding:12px 14px;border-radius:12px;margin-bottom:14px;border:1px solid #fca5a5">'.e($_SESSION['error']).'</div>';
+        echo '<div style="background:#fee2e2;color:#991b1b;padding:12px 14px;border-radius:12px;margin-bottom:14px;border:1px solid #fca5a5">' . e($_SESSION['error']) . '</div>';
         unset($_SESSION['error']);
     }
 }
@@ -70,8 +75,12 @@ function db_exec($sql) {
 function db_fetch_all($query, $params = []) {
     $conn = db();
     if (!$conn) return [];
+
     $stmt = $conn->prepare($query);
-    if (!$stmt) return [];
+    if (!$stmt) {
+        return [];
+    }
+
     if (!empty($params)) {
         $types = '';
         foreach ($params as $p) {
@@ -81,12 +90,17 @@ function db_fetch_all($query, $params = []) {
         }
         $stmt->bind_param($types, ...$params);
     }
+
     $stmt->execute();
     $res = $stmt->get_result();
     $rows = [];
+
     if ($res) {
-        while ($row = $res->fetch_assoc()) $rows[] = $row;
+        while ($row = $res->fetch_assoc()) {
+            $rows[] = $row;
+        }
     }
+
     $stmt->close();
     return $rows;
 }
@@ -99,8 +113,10 @@ function db_fetch_one($query, $params = []) {
 function db_insert($query, $params = []) {
     $conn = db();
     if (!$conn) return false;
+
     $stmt = $conn->prepare($query);
     if (!$stmt) return false;
+
     if (!empty($params)) {
         $types = '';
         foreach ($params as $p) {
@@ -110,6 +126,7 @@ function db_insert($query, $params = []) {
         }
         $stmt->bind_param($types, ...$params);
     }
+
     $ok = $stmt->execute();
     $id = $ok ? $conn->insert_id : false;
     $stmt->close();
@@ -119,8 +136,10 @@ function db_insert($query, $params = []) {
 function db_run($query, $params = []) {
     $conn = db();
     if (!$conn) return false;
+
     $stmt = $conn->prepare($query);
     if (!$stmt) return false;
+
     if (!empty($params)) {
         $types = '';
         foreach ($params as $p) {
@@ -130,6 +149,7 @@ function db_run($query, $params = []) {
         }
         $stmt->bind_param($types, ...$params);
     }
+
     $ok = $stmt->execute();
     $stmt->close();
     return $ok;
@@ -245,7 +265,7 @@ function ensure_core_schema() {
 
     $conn->query("CREATE TABLE IF NOT EXISTS tindakan (
       id INT AUTO_INCREMENT PRIMARY KEY,
-      kode VARCHAR(30) NOT NULL UNIQUE,
+      kode VARCHAR(30) NULL,
       nama_tindakan VARCHAR(255) NOT NULL,
       kategori VARCHAR(100) NOT NULL,
       harga DECIMAL(12,2) DEFAULT 0,
@@ -381,6 +401,47 @@ function ensure_core_schema() {
       INDEX idx_pasien (pasien_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    // Upgrade tabel tindakan lama
+    if (table_exists($conn, 'tindakan')) {
+        if (!column_exists($conn, 'tindakan', 'kode')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN kode VARCHAR(30) NULL");
+        }
+        if (!column_exists($conn, 'tindakan', 'nama_tindakan')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN nama_tindakan VARCHAR(255) NULL");
+            if (column_exists($conn, 'tindakan', 'nama')) {
+                $conn->query("UPDATE tindakan SET nama_tindakan = nama WHERE nama_tindakan IS NULL OR nama_tindakan = ''");
+            }
+        }
+        if (!column_exists($conn, 'tindakan', 'kategori')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN kategori VARCHAR(100) NULL");
+        }
+        if (!column_exists($conn, 'tindakan', 'harga')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN harga DECIMAL(12,2) DEFAULT 0");
+        }
+        if (!column_exists($conn, 'tindakan', 'harga_min')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN harga_min DECIMAL(12,2) DEFAULT NULL");
+        }
+        if (!column_exists($conn, 'tindakan', 'harga_max')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN harga_max DECIMAL(12,2) DEFAULT NULL");
+        }
+        if (!column_exists($conn, 'tindakan', 'satuan_harga')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN satuan_harga VARCHAR(50) DEFAULT 'per tindakan'");
+        }
+        if (!column_exists($conn, 'tindakan', 'keterangan')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN keterangan VARCHAR(255) DEFAULT NULL");
+        }
+        if (!column_exists($conn, 'tindakan', 'aktif')) {
+            $conn->query("ALTER TABLE tindakan ADD COLUMN aktif ENUM('yes','no') DEFAULT 'yes'");
+            $conn->query("UPDATE tindakan SET aktif='yes' WHERE aktif IS NULL");
+        }
+        if (column_exists($conn, 'tindakan', 'kode')) {
+            $conn->query("UPDATE tindakan SET kode = CONCAT('TDK-', id) WHERE (kode IS NULL OR kode = '')");
+        }
+        if (column_exists($conn, 'tindakan', 'nama_tindakan') && column_exists($conn, 'tindakan', 'nama')) {
+            $conn->query("UPDATE tindakan SET nama_tindakan = nama WHERE (nama_tindakan IS NULL OR nama_tindakan = '') AND nama IS NOT NULL");
+        }
+    }
+
     seed_tindakan();
     seed_icd10();
 }
@@ -388,31 +449,39 @@ function ensure_core_schema() {
 function seed_tindakan() {
     $conn = db();
     if (!$conn) return;
+
     $row = db_fetch_one("SELECT COUNT(*) AS jml FROM tindakan");
     if (($row['jml'] ?? 0) > 0) return;
+
     $sql = "INSERT INTO tindakan (kode,nama_tindakan,kategori,harga,harga_min,harga_max,satuan_harga,keterangan,aktif) VALUES (?,?,?,?,?,?,?,?, 'yes')";
     $stmt = $conn->prepare($sql);
     if (!$stmt) return;
+
     foreach (tindakan_seed_data() as $it) {
         [$kode,$nama,$kategori,$harga,$min,$max,$satuan,$ket] = $it;
-        $stmt->bind_param('sssdddss',$kode,$nama,$kategori,$harga,$min,$max,$satuan,$ket);
+        $stmt->bind_param('sssdddss', $kode, $nama, $kategori, $harga, $min, $max, $satuan, $ket);
         $stmt->execute();
     }
+
     $stmt->close();
 }
 
 function seed_icd10() {
     $conn = db();
     if (!$conn) return;
+
     $row = db_fetch_one("SELECT COUNT(*) AS jml FROM icd10");
     if (($row['jml'] ?? 0) > 0) return;
-    $stmt = $conn->prepare("INSERT INTO icd10 (kode, diagnosis) VALUES (?,?)");
+
+    $stmt = $conn->prepare("INSERT INTO icd10 (kode, diagnosis) VALUES (?, ?)");
     if (!$stmt) return;
+
     foreach (icd10_seed_data() as $it) {
-        [$kode,$nama] = $it;
-        $stmt->bind_param('ss',$kode,$nama);
+        [$kode, $nama] = $it;
+        $stmt->bind_param('ss', $kode, $nama);
         $stmt->execute();
     }
+
     $stmt->close();
 }
 
@@ -440,12 +509,25 @@ function pasien_options() {
 }
 
 function tindakan_options() {
-    return db_fetch_all("SELECT * FROM tindakan WHERE aktif='yes' ORDER BY kategori, nama_tindakan ASC");
+    $conn = db();
+    if (!$conn) return [];
+    if (!table_exists($conn, 'tindakan')) return [];
+
+    $sql = "SELECT * FROM tindakan";
+    if (column_exists($conn, 'tindakan', 'aktif')) {
+        $sql .= " WHERE aktif='yes'";
+    }
+    $sql .= " ORDER BY kategori, nama_tindakan ASC";
+
+    return db_fetch_all($sql);
 }
 
 function icd10_options($keyword = '') {
     if ($keyword !== '') {
-        return db_fetch_all("SELECT * FROM icd10 WHERE kode LIKE ? OR diagnosis LIKE ? ORDER BY kode ASC LIMIT 100", ["%$keyword%","%$keyword%"]);
+        return db_fetch_all(
+            "SELECT * FROM icd10 WHERE kode LIKE ? OR diagnosis LIKE ? ORDER BY kode ASC LIMIT 100",
+            ["%$keyword%", "%$keyword%"]
+        );
     }
     return db_fetch_all("SELECT * FROM icd10 ORDER BY kode ASC LIMIT 100");
 }
@@ -453,14 +535,19 @@ function icd10_options($keyword = '') {
 function sync_invoice_finance($invoiceId) {
     $inv = db_fetch_one("SELECT * FROM invoice WHERE id=?", [$invoiceId]);
     if (!$inv) return;
+
     db_run("DELETE FROM keuangan WHERE invoice_id=?", [$invoiceId]);
-    if (in_array(strtolower($inv['status_bayar']), ['lunas','paid'])) {
-        db_insert("INSERT INTO keuangan (tanggal, jenis, deskripsi, nominal, invoice_id, pasien_id) VALUES (NOW(), 'pemasukan', ?, ?, ?, ?)", [
-            'Pembayaran invoice ' . $inv['no_invoice'],
-            (float)$inv['total'],
-            (int)$invoiceId,
-            (int)$inv['pasien_id']
-        ]);
+
+    if (in_array(strtolower($inv['status_bayar']), ['lunas', 'paid'])) {
+        db_insert(
+            "INSERT INTO keuangan (tanggal, jenis, deskripsi, nominal, invoice_id, pasien_id) VALUES (NOW(), 'pemasukan', ?, ?, ?, ?)",
+            [
+                'Pembayaran invoice ' . $inv['no_invoice'],
+                (float)$inv['total'],
+                (int)$invoiceId,
+                (int)$inv['pasien_id']
+            ]
+        );
     }
 }
 
