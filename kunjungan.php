@@ -1,127 +1,26 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
-
+ensure_logged_in();
 $pasienId = (int)($_GET['pasien_id'] ?? 0);
 $editId = (int)($_GET['edit'] ?? 0);
-
-$pasien = null;
-if ($pasienId > 0) {
-    $pasien = db_fetch_one("SELECT * FROM pasien WHERE id = ?", [$pasienId]);
+$pasien = $pasienId ? db_fetch_one("SELECT * FROM pasien WHERE id=?", [$pasienId]) : null;
+$editData = $editId ? db_fetch_one("SELECT * FROM kunjungan WHERE id=?", [$editId]) : null;
+if ($editData && !$pasienId) {
+    $pasienId = (int)$editData['pasien_id'];
+    $pasien = db_fetch_one("SELECT * FROM pasien WHERE id=?", [$pasienId]);
 }
-
-$editData = null;
-if ($editId > 0) {
-    $editData = db_fetch_one("SELECT * FROM kunjungan WHERE id = ?", [$editId]);
-    if ($editData && !$pasienId) {
-        $pasienId = (int)$editData['pasien_id'];
-        $pasien = db_fetch_one("SELECT * FROM pasien WHERE id = ?", [$pasienId]);
-    }
-}
-
-$pasienList = db_fetch_all("SELECT id, no_rm, nama FROM pasien ORDER BY nama ASC");
+$pasienList = pasien_options();
+$icdList = icd10_options();
+$tindakanList = tindakan_options();
 $kunjunganList = $pasienId > 0
-    ? db_fetch_all("SELECT k.*, p.no_rm, p.nama FROM kunjungan k JOIN pasien p ON p.id = k.pasien_id WHERE k.pasien_id = ? ORDER BY k.tanggal DESC", [$pasienId])
-    : db_fetch_all("SELECT k.*, p.no_rm, p.nama FROM kunjungan k JOIN pasien p ON p.id = k.pasien_id ORDER BY k.tanggal DESC LIMIT 100");
+    ? db_fetch_all("SELECT k.*, p.no_rm, p.nama FROM kunjungan k JOIN pasien p ON p.id=k.pasien_id WHERE k.pasien_id=? ORDER BY k.tanggal DESC", [$pasienId])
+    : db_fetch_all("SELECT k.*, p.no_rm, p.nama FROM kunjungan k JOIN pasien p ON p.id=k.pasien_id ORDER BY k.tanggal DESC LIMIT 200");
 ?>
-<!doctype html>
-<html lang="id">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kunjungan</title>
-<style>
-body{font-family:Arial,sans-serif;background:#f6f8fb;margin:0;color:#1f2937}.wrap{max-width:1200px;margin:24px auto;padding:0 16px}.card{background:#fff;border-radius:18px;padding:20px;box-shadow:0 8px 24px rgba(0,0,0,.06);margin-bottom:18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.full{grid-column:1/-1}input,select,textarea,button{width:100%;padding:11px 12px;border:1px solid #d1d5db;border-radius:12px;box-sizing:border-box}button,.btn{background:#111827;color:#fff;border:none;text-decoration:none;display:inline-block;text-align:center;cursor:pointer}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:14px}.small{font-size:12px;color:#6b7280}.actions a{margin-right:6px;text-decoration:none;padding:7px 10px;border-radius:10px;background:#eef2ff;color:#1e3a8a;display:inline-block}.row{display:flex;gap:10px;flex-wrap:wrap}@media(max-width:768px){.grid{grid-template-columns:1fr}}
-</style>
-</head>
-<body>
-<div class="wrap">
-    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:16px">
-        <div>
-            <h1 style="margin:0">Kunjungan Pasien</h1>
-            <div class="small"><?= $pasien ? 'Pasien: ' . e($pasien['no_rm']) . ' - ' . e($pasien['nama']) : 'Semua kunjungan' ?></div>
-        </div>
-        <div class="row">
-            <a class="btn" style="padding:11px 16px" href="pasien.php">Data Pasien</a>
-            <a class="btn" style="padding:11px 16px;background:#4b5563" href="dashboard.php">Dashboard</a>
-        </div>
-    </div>
-
-    <div class="card">
-        <?php flash_message(); ?>
-        <h2 style="margin-top:0"><?= $editData ? 'Edit Kunjungan' : 'Tambah Kunjungan' ?></h2>
-        <form method="post" action="simpan_kunjungan.php">
-            <input type="hidden" name="id" value="<?= (int)($editData['id'] ?? 0) ?>">
-            <div class="grid">
-                <div>
-                    <label>Pasien</label>
-                    <select name="pasien_id" required>
-                        <option value="">Pilih pasien</option>
-                        <?php foreach ($pasienList as $p): ?>
-                            <option value="<?= (int)$p['id'] ?>" <?= ((int)($editData['pasien_id'] ?? $pasienId) === (int)$p['id']) ? 'selected' : '' ?>><?= e($p['no_rm']) ?> - <?= e($p['nama']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div>
-                    <label>Tanggal Kunjungan</label>
-                    <input type="datetime-local" name="tanggal" required value="<?= e(isset($editData['tanggal']) ? date('Y-m-d\TH:i', strtotime($editData['tanggal'])) : date('Y-m-d\TH:i')) ?>">
-                </div>
-                <div class="full">
-                    <label>Keluhan Utama</label>
-                    <textarea name="keluhan" rows="2"><?= e($editData['keluhan'] ?? '') ?></textarea>
-                </div>
-                <div>
-                    <label>Diagnosa</label>
-                    <input type="text" name="diagnosa" value="<?= e($editData['diagnosa'] ?? '') ?>">
-                </div>
-                <div>
-                    <label>Dokter</label>
-                    <input type="text" name="dokter" value="<?= e($editData['dokter'] ?? '') ?>">
-                </div>
-                <div class="full">
-                    <label>Tindakan</label>
-                    <textarea name="tindakan" rows="3"><?= e($editData['tindakan'] ?? '') ?></textarea>
-                </div>
-                <div class="full">
-                    <label>Odontogram / Ringkasan Gigi</label>
-                    <textarea name="odontogram" rows="3"><?= e($editData['odontogram'] ?? '') ?></textarea>
-                </div>
-                <div class="full">
-                    <label>Catatan</label>
-                    <textarea name="catatan" rows="3"><?= e($editData['catatan'] ?? '') ?></textarea>
-                </div>
-            </div>
-            <div class="row" style="margin-top:14px">
-                <button type="submit" style="width:auto;padding:11px 16px">Simpan Kunjungan</button>
-                <?php if ($editData): ?><a href="kunjungan.php?pasien_id=<?= (int)$pasienId ?>" class="btn" style="padding:11px 16px;width:auto;background:#6b7280">Batal</a><?php endif; ?>
-            </div>
-        </form>
-    </div>
-
-    <div class="card">
-        <h2 style="margin-top:0">Riwayat Kunjungan</h2>
-        <div style="overflow:auto">
-            <table class="table">
-                <thead><tr><th>Tanggal</th><th>Pasien</th><th>Keluhan</th><th>Diagnosa</th><th>Tindakan</th><th>Aksi</th></tr></thead>
-                <tbody>
-                <?php foreach ($kunjunganList as $k): ?>
-                    <tr>
-                        <td><?= e($k['tanggal']) ?></td>
-                        <td><strong><?= e($k['no_rm']) ?></strong><br><?= e($k['nama']) ?></td>
-                        <td><?= e($k['keluhan']) ?></td>
-                        <td><?= e($k['diagnosa']) ?></td>
-                        <td><?= e($k['tindakan']) ?></td>
-                        <td class="actions">
-                            <a href="kunjungan.php?edit=<?= (int)$k['id'] ?>">Edit</a>
-                            <a href="invoice.php?pasien_id=<?= (int)$k['pasien_id'] ?>&kunjungan_id=<?= (int)$k['id'] ?>">Buat Invoice</a>
-                            <a href="resume_medis.php?kunjungan_id=<?= (int)$k['id'] ?>">Resume</a>
-                            <a href="surat_sakit.php?kunjungan_id=<?= (int)$k['id'] ?>">Surat Sakit</a>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                <?php if (!$kunjunganList): ?><tr><td colspan="6">Belum ada kunjungan.</td></tr><?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-</body>
-</html>
+<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kunjungan</title><style>*{box-sizing:border-box;font-family:Inter,Arial,sans-serif}body{margin:0;background:#f8fbff;color:#0f172a}.wrap{max-width:1360px;margin:0 auto;padding:24px}.head,.row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}.card{background:#fff;border:1px solid #e2e8f0;border-radius:24px;padding:22px;box-shadow:0 14px 30px rgba(15,23,42,.06);margin-bottom:18px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.full{grid-column:1/-1}input,select,textarea,button{width:100%;padding:13px 14px;border:1px solid #cbd5e1;border-radius:14px}.btn,button{background:#0f172a;color:#fff;text-decoration:none;display:inline-block;text-align:center;border:none;font-weight:700;cursor:pointer}.btn.secondary{background:#475569}.small{color:#64748b;font-size:13px}.actions a{display:inline-block;margin:4px 6px 0 0;padding:8px 10px;border-radius:12px;text-decoration:none;background:#eff6ff;color:#1d4ed8}.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}.suggest{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:12px;max-height:240px;overflow:auto}.pill{display:inline-block;background:#eff6ff;color:#1d4ed8;padding:8px 10px;border-radius:999px;margin:4px;cursor:pointer}@media(max-width:860px){.grid{grid-template-columns:1fr}}</style>
+<script>
+function fillIcd(kode, nama){ document.getElementById('icd10_code').value = kode; document.getElementById('diagnosa').value = kode+' - '+nama; }
+function addTindakan(nama){ const el=document.getElementById('tindakan'); if(!el.value.trim()){ el.value=nama; } else if(!el.value.includes(nama)){ el.value += "\n" + nama; } }
+</script></head><body><div class="wrap">
+<div class="head"><div><h1 style="margin:0 0 8px">Kunjungan Pasien</h1><div class="small"><?= $pasien ? 'Pasien: '.e($pasien['no_rm']).' - '.e($pasien['nama']) : 'Seluruh kunjungan pasien' ?></div></div><div class="row"><a class="btn secondary" href="dashboard.php">Dashboard</a><a class="btn" href="pasien.php">Data Pasien</a></div></div>
+<div class="card"><?php flash_message(); ?><h2 style="margin-top:0"><?= $editData ? 'Edit Kunjungan' : 'Tambah Kunjungan' ?></h2><form method="post" action="simpan_kunjungan.php"><input type="hidden" name="id" value="<?= (int)($editData['id'] ?? 0) ?>"><div class="grid"><div><label>Pasien</label><select name="pasien_id" required><option value="">Pilih pasien</option><?php foreach($pasienList as $p): ?><option value="<?= (int)$p['id'] ?>" <?= ((int)($editData['pasien_id'] ?? $pasienId) === (int)$p['id']) ? 'selected' : '' ?>><?= e($p['no_rm']) ?> - <?= e($p['nama']) ?></option><?php endforeach; ?></select></div><div><label>Tanggal Kunjungan</label><input type="datetime-local" name="tanggal" required value="<?= e(isset($editData['tanggal']) ? date('Y-m-d\TH:i', strtotime($editData['tanggal'])) : date('Y-m-d\TH:i')) ?>"></div><div class="full"><label>Keluhan Utama</label><textarea name="keluhan" rows="3"><?= e($editData['keluhan'] ?? '') ?></textarea></div><div><label>Kode ICD-10</label><input type="text" id="icd10_code" name="icd10_code" value="<?= e($editData['icd10_code'] ?? '') ?>" placeholder="Mis. K02.1"></div><div><label>Diagnosa</label><input type="text" id="diagnosa" name="diagnosa" value="<?= e($editData['diagnosa'] ?? '') ?>" placeholder="Pilih dari daftar ICD-10"></div><div><label>Dokter</label><input type="text" name="dokter" value="<?= e($editData['dokter'] ?? current_user_name()) ?>"></div><div class="full"><label>Tindakan</label><textarea id="tindakan" name="tindakan" rows="4" placeholder="Bisa pilih dari katalog tindakan atau tulis manual"><?= e($editData['tindakan'] ?? '') ?></textarea></div><div class="full"><label>Catatan</label><textarea name="catatan" rows="3"><?= e($editData['catatan'] ?? '') ?></textarea></div></div><div class="grid" style="margin-top:16px"><div><label>Referensi ICD-10</label><div class="suggest"><?php foreach($icdList as $icd): ?><span class="pill" onclick="fillIcd('<?= e($icd['kode']) ?>','<?= e($icd['diagnosis']) ?>')"><?= e($icd['kode']) ?> - <?= e($icd['diagnosis']) ?></span><?php endforeach; ?></div></div><div><label>Referensi Tindakan</label><div class="suggest"><?php foreach($tindakanList as $td): ?><span class="pill" onclick="addTindakan('<?= e($td['nama_tindakan']) ?>')"><?= e($td['nama_tindakan']) ?> • <?= e(rupiah($td['harga'])) ?></span><?php endforeach; ?></div></div></div><div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px"><button type="submit" style="width:auto;padding:13px 18px">Simpan Kunjungan</button><?php if($editData): ?><a class="btn secondary" style="padding:13px 18px" href="kunjungan.php?pasien_id=<?= (int)$pasienId ?>">Batal</a><?php endif; ?></div></form></div>
+<div class="card"><h2 style="margin-top:0">Riwayat Kunjungan</h2><div class="table-wrap"><table class="table"><thead><tr><th>Tanggal</th><th>Pasien</th><th>Diagnosa</th><th>Tindakan</th><th>Aksi</th></tr></thead><tbody><?php foreach($kunjunganList as $k): ?><tr><td><?= e($k['tanggal']) ?></td><td><strong><?= e($k['no_rm']) ?></strong><div class="small"><?= e($k['nama']) ?></div></td><td><?= e($k['diagnosa']) ?><div class="small"><?= e($k['icd10_code']) ?></div></td><td><?= nl2br(e($k['tindakan'])) ?></td><td class="actions"><a href="kunjungan.php?edit=<?= (int)$k['id'] ?>">Edit</a><a href="odontogram.php?pasien_id=<?= (int)$k['pasien_id'] ?>&kunjungan_id=<?= (int)$k['id'] ?>">Odontogram</a><a href="invoice.php?pasien_id=<?= (int)$k['pasien_id'] ?>&kunjungan_id=<?= (int)$k['id'] ?>">Billing</a><a href="resume_medis.php?kunjungan_id=<?= (int)$k['id'] ?>">Resume</a><a href="surat_sakit.php?kunjungan_id=<?= (int)$k['id'] ?>">Surat</a></td></tr><?php endforeach; if(!$kunjunganList): ?><tr><td colspan="5">Belum ada kunjungan.</td></tr><?php endif; ?></tbody></table></div></div></div></body></html>

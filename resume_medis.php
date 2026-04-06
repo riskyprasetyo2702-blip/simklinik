@@ -1,37 +1,7 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
-
-$kunjunganId = (int)($_GET['kunjungan_id'] ?? 0);
-$data = db_fetch_one("SELECT k.*, p.no_rm, p.nama, p.jk, p.tanggal_lahir, p.alamat, p.telepon FROM kunjungan k JOIN pasien p ON p.id = k.pasien_id WHERE k.id=?", [$kunjunganId]);
-if (!$data) die('Data kunjungan tidak ditemukan.');
-?>
-<!doctype html>
-<html lang="id">
-<head>
-<meta charset="utf-8"><title>Resume Medis</title>
-<style>
-body{font-family:Arial,sans-serif;color:#111;margin:30px;line-height:1.5}table{width:100%;border-collapse:collapse}td{padding:6px 4px;vertical-align:top}.box{border:1px solid #d1d5db;border-radius:12px;padding:14px;margin-top:14px}.no-print{margin-bottom:20px}@media print {.no-print{display:none} body{margin:0;padding:16px}}
-</style>
-</head>
-<body>
-<div class="no-print"><button onclick="window.print()">Print / Save PDF</button></div>
-<h2 style="text-align:center;margin-bottom:24px">RESUME MEDIS</h2>
-<table>
-<tr><td width="160">No. Rekam Medis</td><td>: <?= e($data['no_rm']) ?></td></tr>
-<tr><td>Nama Pasien</td><td>: <?= e($data['nama']) ?></td></tr>
-<tr><td>Jenis Kelamin</td><td>: <?= e($data['jk']) ?></td></tr>
-<tr><td>Tanggal Lahir</td><td>: <?= e($data['tanggal_lahir']) ?></td></tr>
-<tr><td>Telepon</td><td>: <?= e($data['telepon']) ?></td></tr>
-<tr><td>Alamat</td><td>: <?= e($data['alamat']) ?></td></tr>
-<tr><td>Tanggal Kunjungan</td><td>: <?= e($data['tanggal']) ?></td></tr>
-<tr><td>Dokter</td><td>: <?= e($data['dokter']) ?></td></tr>
-</table>
-<div class="box"><strong>Keluhan Utama</strong><br><?= nl2br(e($data['keluhan'])) ?></div>
-<div class="box"><strong>Diagnosa</strong><br><?= nl2br(e($data['diagnosa'])) ?></div>
-<div class="box"><strong>Tindakan</strong><br><?= nl2br(e($data['tindakan'])) ?></div>
-<div class="box"><strong>Odontogram / Temuan Klinis</strong><br><?= nl2br(e($data['odontogram'])) ?></div>
-<div class="box"><strong>Catatan Tambahan</strong><br><?= nl2br(e($data['catatan'])) ?></div>
-<br><br>
-<div style="text-align:right">Dokter Pemeriksa<br><br><br>________________________</div>
-</body>
-</html>
+ensure_logged_in();
+$kunjunganId=(int)($_GET['kunjungan_id'] ?? 0);
+$kunjungan=$kunjunganId?db_fetch_one("SELECT k.*, p.no_rm, p.nama FROM kunjungan k JOIN pasien p ON p.id=k.pasien_id WHERE k.id=?",[$kunjunganId]):null;
+if(!$kunjungan){ die('Kunjungan tidak ditemukan.'); }
+?><!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Resume Medis</title><style>body{font-family:Arial,sans-serif;background:#fff;max-width:860px;margin:0 auto;padding:24px}.box{border:1px solid #d1d5db;border-radius:16px;padding:16px;margin-bottom:16px}.btn{display:inline-block;background:#111827;color:#fff;text-decoration:none;padding:12px 16px;border-radius:12px;font-weight:700}</style></head><body><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:16px"><h1 style="margin:0">Resume Medis</h1><div><a class="btn" href="#" onclick="window.print();return false;">Print</a></div></div><div class="box"><strong><?= e(KLINIK_NAMA) ?></strong><div><?= e($kunjungan['no_rm']) ?> - <?= e($kunjungan['nama']) ?></div><div>Tanggal Kunjungan: <?= e($kunjungan['tanggal']) ?></div></div><div class="box"><strong>Keluhan Utama</strong><div><?= nl2br(e($kunjungan['keluhan'])) ?></div></div><div class="box"><strong>Diagnosa</strong><div><?= e($kunjungan['diagnosa']) ?></div><div>Kode ICD-10: <?= e($kunjungan['icd10_code']) ?></div></div><div class="box"><strong>Tindakan</strong><div><?= nl2br(e($kunjungan['tindakan'])) ?></div></div><div class="box"><strong>Catatan</strong><div><?= nl2br(e($kunjungan['catatan'])) ?></div></div></body></html>

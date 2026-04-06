@@ -1,55 +1,8 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
-
-$kunjunganId = (int)($_GET['kunjungan_id'] ?? 0);
-$data = db_fetch_one("SELECT k.*, p.no_rm, p.nama, p.jk, p.tanggal_lahir, p.alamat FROM kunjungan k JOIN pasien p ON p.id = k.pasien_id WHERE k.id=?", [$kunjunganId]);
-if (!$data) die('Data kunjungan tidak ditemukan.');
-
-$hari = (int)($_GET['hari'] ?? 1);
-$tglMulai = $_GET['mulai'] ?? date('Y-m-d');
-$tglSelesai = date('Y-m-d', strtotime($tglMulai . ' +' . max(0, $hari-1) . ' day'));
-?>
-<!doctype html>
-<html lang="id">
-<head>
-<meta charset="utf-8"><title>Surat Sakit</title>
-<style>
-body{font-family:Arial,sans-serif;color:#111;margin:40px;line-height:1.7}.no-print{margin-bottom:20px}@media print {.no-print{display:none} body{margin:0;padding:26px}}
-</style>
-</head>
-<body>
-<div class="no-print">
-    <button onclick="window.print()">Print / Save PDF</button>
-    <form method="get" style="display:inline-block;margin-left:12px">
-        <input type="hidden" name="kunjungan_id" value="<?= (int)$kunjunganId ?>">
-        <label>Mulai: <input type="date" name="mulai" value="<?= e($tglMulai) ?>"></label>
-        <label>Hari: <input type="number" min="1" name="hari" value="<?= (int)$hari ?>" style="width:70px"></label>
-        <button type="submit">Update</button>
-    </form>
-</div>
-
-<div style="text-align:center">
-    <h2 style="margin-bottom:0">SURAT KETERANGAN SAKIT</h2>
-    <p>Nomor: <?= 'SKS/' . date('Ym') . '/' . str_pad((string)$kunjunganId, 3, '0', STR_PAD_LEFT) ?></p>
-</div>
-
-<p>Yang bertanda tangan di bawah ini menerangkan bahwa:</p>
-<table>
-<tr><td width="140">Nama</td><td>: <?= e($data['nama']) ?></td></tr>
-<tr><td>No. RM</td><td>: <?= e($data['no_rm']) ?></td></tr>
-<tr><td>Jenis Kelamin</td><td>: <?= e($data['jk']) ?></td></tr>
-<tr><td>Tanggal Lahir</td><td>: <?= e($data['tanggal_lahir']) ?></td></tr>
-<tr><td>Alamat</td><td>: <?= e($data['alamat']) ?></td></tr>
-</table>
-
-<p>Berdasarkan hasil pemeriksaan pada tanggal <strong><?= e(date('d-m-Y', strtotime($data['tanggal']))) ?></strong>, pasien tersebut memerlukan istirahat selama <strong><?= (int)$hari ?> hari</strong>, terhitung mulai tanggal <strong><?= e(date('d-m-Y', strtotime($tglMulai))) ?></strong> sampai dengan <strong><?= e(date('d-m-Y', strtotime($tglSelesai))) ?></strong>.</p>
-<p>Demikian surat keterangan ini dibuat untuk dapat dipergunakan sebagaimana mestinya.</p>
-
-<br><br>
-<div style="text-align:right">
-    <?= e(date('d F Y')) ?><br>
-    Dokter Pemeriksa<br><br><br>
-    ________________________
-</div>
-</body>
-</html>
+ensure_logged_in();
+$kunjunganId=(int)($_GET['kunjungan_id'] ?? 0);
+$kunjungan=$kunjunganId?db_fetch_one("SELECT k.*, p.no_rm, p.nama FROM kunjungan k JOIN pasien p ON p.id=k.pasien_id WHERE k.id=?",[$kunjunganId]):null;
+if(!$kunjungan){ die('Kunjungan tidak ditemukan.'); }
+$nomor='SS-'.date('Ymd').'-'.$kunjunganId;
+?><!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Surat Sakit</title><style>body{font-family:Arial,sans-serif;background:#fff;max-width:860px;margin:0 auto;padding:24px}.box{border:1px solid #d1d5db;border-radius:16px;padding:16px;margin-bottom:16px}.btn{display:inline-block;background:#111827;color:#fff;text-decoration:none;padding:12px 16px;border-radius:12px;font-weight:700}</style></head><body><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:16px"><h1 style="margin:0">Surat Sakit</h1><div><a class="btn" href="#" onclick="window.print();return false;">Print</a></div></div><div class="box"><strong><?= e(KLINIK_NAMA) ?></strong><div>Nomor Surat: <?= e($nomor) ?></div><div>Tanggal: <?= e(date('Y-m-d')) ?></div></div><div class="box">Menerangkan bahwa pasien berikut:<br><br><strong><?= e($kunjungan['nama']) ?></strong><br>No RM: <?= e($kunjungan['no_rm']) ?><br><br>Pada pemeriksaan tanggal <?= e($kunjungan['tanggal']) ?> memerlukan istirahat selama <strong>1 (satu) hari</strong> sejak tanggal <?= e(date('Y-m-d')) ?>.<br><br>Diagnosis singkat: <?= e($kunjungan['diagnosa']) ?></div><div class="box">Dokter pemeriksa,<br><br><br><strong><?= e(current_user_name()) ?></strong></div></body></html>

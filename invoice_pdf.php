@@ -1,63 +1,8 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
-
-$id = (int)($_GET['id'] ?? 0);
-$invoice = db_fetch_one("SELECT i.*, p.no_rm, p.nama, p.alamat, p.telepon FROM invoice i JOIN pasien p ON p.id=i.pasien_id WHERE i.id=?", [$id]);
-if (!$invoice) die('Invoice tidak ditemukan.');
-$items = db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id ASC", [$id]);
-?>
-<!doctype html>
-<html lang="id">
-<head>
-<meta charset="utf-8"><title>Cetak Invoice</title>
-<style>
-body{font-family:Arial,sans-serif;color:#111;margin:30px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;font-size:13px}.no-border td{border:none;padding:3px 0}h1,h2,h3,p{margin:0}.text-right{text-align:right}.text-center{text-align:center}.mb{margin-bottom:20px}.badge{display:inline-block;padding:6px 10px;border-radius:10px;background:#eee;font-size:12px}
-@media print {.no-print{display:none} body{margin:0;padding:16px}}
-</style>
-</head>
-<body>
-<div class="no-print mb"><button onclick="window.print()">Print / Save PDF</button></div>
-<table class="no-border mb">
-<tr>
-<td>
-    <h2>INVOICE KLINIK</h2>
-    <p>No: <?= e($invoice['no_invoice']) ?></p>
-    <p>Tanggal: <?= e($invoice['tanggal']) ?></p>
-</td>
-<td class="text-right">
-    <span class="badge">Status: <?= e(strtoupper($invoice['status_bayar'])) ?></span>
-</td>
-</tr>
-</table>
-
-<table class="no-border mb">
-<tr><td width="100"><strong>No RM</strong></td><td>: <?= e($invoice['no_rm']) ?></td></tr>
-<tr><td><strong>Nama</strong></td><td>: <?= e($invoice['nama']) ?></td></tr>
-<tr><td><strong>Telepon</strong></td><td>: <?= e($invoice['telepon']) ?></td></tr>
-<tr><td><strong>Alamat</strong></td><td>: <?= e($invoice['alamat']) ?></td></tr>
-</table>
-
-<table class="mb">
-<thead><tr><th>No</th><th>Item</th><th>Qty</th><th>Harga</th><th>Subtotal</th></tr></thead>
-<tbody>
-<?php foreach ($items as $i => $it): ?>
-<tr>
-<td class="text-center"><?= $i+1 ?></td>
-<td><?= e($it['nama_item']) ?><?= $it['keterangan'] ? '<br><small>' . e($it['keterangan']) . '</small>' : '' ?></td>
-<td class="text-center"><?= e(rtrim(rtrim((string)$it['qty'], '0'), '.')) ?></td>
-<td class="text-right">Rp <?= number_format((float)$it['harga'], 0, ',', '.') ?></td>
-<td class="text-right">Rp <?= number_format((float)$it['subtotal'], 0, ',', '.') ?></td>
-</tr>
-<?php endforeach; ?>
-</tbody>
-<tfoot>
-<tr><td colspan="4" class="text-right"><strong>Subtotal</strong></td><td class="text-right">Rp <?= number_format((float)$invoice['subtotal'], 0, ',', '.') ?></td></tr>
-<tr><td colspan="4" class="text-right"><strong>Diskon</strong></td><td class="text-right">Rp <?= number_format((float)$invoice['diskon'], 0, ',', '.') ?></td></tr>
-<tr><td colspan="4" class="text-right"><strong>Total</strong></td><td class="text-right"><strong>Rp <?= number_format((float)$invoice['total'], 0, ',', '.') ?></strong></td></tr>
-</tfoot>
-</table>
-
-<p><strong>Metode Bayar:</strong> <?= e(strtoupper($invoice['metode_bayar'])) ?></p>
-<?php if ($invoice['catatan']): ?><p><strong>Catatan:</strong> <?= nl2br(e($invoice['catatan'])) ?></p><?php endif; ?>
-</body>
-</html>
+ensure_logged_in();
+$id=(int)($_GET['id'] ?? 0);
+$inv=db_fetch_one("SELECT i.*, p.no_rm, p.nama, p.alamat, p.telepon FROM invoice i JOIN pasien p ON p.id=i.pasien_id WHERE i.id=?",[$id]);
+if(!$inv){ die('Invoice tidak ditemukan'); }
+$items=db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id ASC",[$id]);
+?><!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title><?= e($inv['no_invoice']) ?></title><style>body{font-family:Arial,sans-serif;background:#fff;color:#111827;margin:0}.page{max-width:900px;margin:0 auto;padding:28px}.head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.muted{color:#6b7280;font-size:13px}.box{border:1px solid #d1d5db;border-radius:16px;padding:16px;margin-top:18px}.table{width:100%;border-collapse:collapse;margin-top:12px}.table th,.table td{border-bottom:1px solid #e5e7eb;padding:10px;text-align:left}.right{text-align:right}.badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#dcfce7;color:#166534;font-weight:bold}.tools{position:sticky;top:0;background:#fff;padding:14px;border-bottom:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end}.btn{background:#111827;color:#fff;border:none;border-radius:12px;padding:12px 16px;font-weight:700;cursor:pointer} @media print {.tools{display:none}.page{max-width:none;padding:0.5cm} body{margin:0}}</style></head><body><div class="tools"><button class="btn" onclick="window.print()">Print / Save PDF</button><button class="btn" onclick="window.close()">Tutup</button></div><div class="page"><div class="head"><div><h1 style="margin:0 0 6px">INVOICE</h1><div style="font-weight:700"><?= e(KLINIK_NAMA) ?></div><div class="muted"><?= e(KLINIK_ALAMAT) ?><br><?= e(KLINIK_TELP) ?></div></div><div class="right"><div><strong><?= e($inv['no_invoice']) ?></strong></div><div class="muted"><?= e($inv['tanggal']) ?></div><div style="margin-top:8px"><?php if(strtolower($inv['status_bayar'])==='lunas'): ?><span class="badge">LUNAS</span><?php else: ?><span class="badge" style="background:#fef3c7;color:#92400e"><?= e(strtoupper($inv['status_bayar'])) ?></span><?php endif; ?></div></div></div><div class="box"><strong>Pasien</strong><div><?= e($inv['no_rm']) ?> - <?= e($inv['nama']) ?></div><div class="muted"><?= e($inv['alamat']) ?><?= $inv['telepon'] ? ' • '.e($inv['telepon']) : '' ?></div></div><table class="table"><thead><tr><th>Item</th><th>Gigi</th><th class="right">Qty</th><th class="right">Harga</th><th class="right">Subtotal</th></tr></thead><tbody><?php foreach($items as $it): ?><tr><td><?= e($it['nama_item']) ?><div class="muted"><?= e($it['keterangan']) ?></div></td><td><?= e($it['nomor_gigi']) ?></td><td class="right"><?= e($it['qty']) ?></td><td class="right"><?= e(rupiah($it['harga'])) ?></td><td class="right"><?= e(rupiah($it['subtotal'])) ?></td></tr><?php endforeach; ?></tbody></table><div class="box"><table style="width:100%"><tr><td>Metode Bayar</td><td class="right"><strong><?= e(strtoupper($inv['metode_bayar'])) ?></strong></td></tr><tr><td>Subtotal</td><td class="right"><?= e(rupiah($inv['subtotal'])) ?></td></tr><tr><td>Diskon</td><td class="right"><?= e(rupiah($inv['diskon'])) ?></td></tr><tr><td><strong>Total</strong></td><td class="right"><strong><?= e(rupiah($inv['total'])) ?></strong></td></tr></table><?php if(strtolower($inv['metode_bayar'])==='qris'): ?><div style="margin-top:16px"><strong>QRIS</strong><div class="muted">Pembayaran via QRIS tersedia pada kasir / front desk klinik.</div><?php if(QRIS_IMAGE_URL): ?><div style="margin-top:10px"><img src="<?= e(QRIS_IMAGE_URL) ?>" style="max-width:180px"></div><?php endif; ?></div><?php endif; ?></div><div class="muted" style="margin-top:18px">Dokumen ini dioptimalkan untuk print browser dan Save as PDF.</div></div></body></html>

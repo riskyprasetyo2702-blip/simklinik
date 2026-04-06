@@ -1,218 +1,52 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
-
-$pasienId = (int)($_GET['pasien_id'] ?? 0);
-$kunjunganId = (int)($_GET['kunjungan_id'] ?? 0);
-$editId = (int)($_GET['edit'] ?? 0);
-
-$pasien = $pasienId > 0 ? db_fetch_one("SELECT * FROM pasien WHERE id=?", [$pasienId]) : null;
-$kunjungan = $kunjunganId > 0 ? db_fetch_one("SELECT * FROM kunjungan WHERE id=?", [$kunjunganId]) : null;
-
-$editData = null;
-$editItems = [];
-if ($editId > 0) {
-    $editData = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$editId]);
-    if ($editData) {
-        $pasienId = (int)$editData['pasien_id'];
-        $kunjunganId = (int)$editData['kunjungan_id'];
-        $pasien = db_fetch_one("SELECT * FROM pasien WHERE id=?", [$pasienId]);
-        if ($kunjunganId > 0) $kunjungan = db_fetch_one("SELECT * FROM kunjungan WHERE id=?", [$kunjunganId]);
-        $editItems = db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC", [$editId]);
+ensure_logged_in();
+$pasienId=(int)($_GET['pasien_id'] ?? 0);
+$kunjunganId=(int)($_GET['kunjungan_id'] ?? 0);
+$editId=(int)($_GET['edit'] ?? 0);
+$syncOdo=(int)($_GET['sync_odo'] ?? 0);
+$pasien=$pasienId?db_fetch_one("SELECT * FROM pasien WHERE id=?",[$pasienId]):null;
+$kunjungan=$kunjunganId?db_fetch_one("SELECT * FROM kunjungan WHERE id=?",[$kunjunganId]):null;
+if($syncOdo && $kunjunganId>0 && $pasienId>0){
+    $itemsOdo=db_fetch_all("SELECT * FROM odontogram_tindakan WHERE kunjungan_id=? ORDER BY id ASC",[$kunjunganId]);
+    if($itemsOdo){
+        $existing=db_fetch_one("SELECT id FROM invoice WHERE kunjungan_id=? ORDER BY id DESC LIMIT 1",[$kunjunganId]);
+        if(!$existing){
+            $invoiceId=db_insert("INSERT INTO invoice (pasien_id, kunjungan_id, no_invoice, tanggal, subtotal, diskon, total, status_bayar, metode_bayar, catatan) VALUES (?,?,?,?,0,0,0,'pending','qris','Auto draft dari odontogram')",[$pasienId,$kunjunganId,next_invoice_no(),date('Y-m-d H:i:s')]);
+            foreach($itemsOdo as $it){ db_insert("INSERT INTO invoice_items (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, nomor_gigi, keterangan) VALUES (?,?,?,?,?,?,?,?)",[$invoiceId,$it['tindakan_id'],$it['nama_tindakan'],$it['qty'],$it['harga'],$it['subtotal'],$it['nomor_gigi'],$it['catatan']]); }
+            $sum=db_fetch_one("SELECT COALESCE(SUM(subtotal),0) subtotal FROM invoice_items WHERE invoice_id=?",[$invoiceId]);
+            db_run("UPDATE invoice SET subtotal=?, total=? WHERE id=?",[(float)$sum['subtotal'],(float)$sum['subtotal'],$invoiceId]);
+            $_SESSION['success']='Draft invoice otomatis dibuat dari odontogram.';
+            header('Location: invoice.php?edit='.$invoiceId); exit;
+        }
     }
 }
-
-function next_invoice_no() {
-    $date = date('Ymd');
-    $row = db_fetch_one("SELECT no_invoice FROM invoice WHERE no_invoice LIKE ? ORDER BY id DESC LIMIT 1", ["INV-$date-%"]);
-    $num = 1;
-    if (!empty($row['no_invoice']) && preg_match('/-(\d+)$/', $row['no_invoice'], $m)) {
-        $num = ((int)$m[1]) + 1;
-    }
-    return 'INV-' . $date . '-' . str_pad((string)$num, 4, '0', STR_PAD_LEFT);
+$editData=null; $editItems=[];
+if($editId>0){
+  $editData=db_fetch_one("SELECT * FROM invoice WHERE id=?",[$editId]);
+  if($editData){
+    $pasienId=(int)$editData['pasien_id']; $kunjunganId=(int)($editData['kunjungan_id'] ?? 0);
+    $pasien=db_fetch_one("SELECT * FROM pasien WHERE id=?",[$pasienId]);
+    $kunjungan=$kunjunganId?db_fetch_one("SELECT * FROM kunjungan WHERE id=?",[$kunjunganId]):null;
+    $editItems=db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id ASC",[$editId]);
+  }
 }
-
-$pasienList = db_fetch_all("SELECT id, no_rm, nama FROM pasien ORDER BY nama ASC");
-$kunjunganList = $pasienId > 0 ? db_fetch_all("SELECT id, tanggal, diagnosa, tindakan FROM kunjungan WHERE pasien_id = ? ORDER BY tanggal DESC", [$pasienId]) : [];
-$invoiceList = $pasienId > 0
-    ? db_fetch_all("SELECT i.*, p.no_rm, p.nama FROM invoice i JOIN pasien p ON p.id=i.pasien_id WHERE i.pasien_id=? ORDER BY i.tanggal DESC", [$pasienId])
-    : db_fetch_all("SELECT i.*, p.no_rm, p.nama FROM invoice i JOIN pasien p ON p.id=i.pasien_id ORDER BY i.tanggal DESC LIMIT 100");
+$pasienList=pasien_options();
+$kunjunganList=$pasienId>0?db_fetch_all("SELECT id, tanggal, diagnosa, tindakan FROM kunjungan WHERE pasien_id=? ORDER BY tanggal DESC",[$pasienId]):[];
+$invoiceList=$pasienId>0?db_fetch_all("SELECT i.*, p.no_rm, p.nama FROM invoice i JOIN pasien p ON p.id=i.pasien_id WHERE i.pasien_id=? ORDER BY i.tanggal DESC",[$pasienId]):db_fetch_all("SELECT i.*, p.no_rm, p.nama FROM invoice i JOIN pasien p ON p.id=i.pasien_id ORDER BY i.tanggal DESC LIMIT 200");
+$tindakanList=tindakan_options();
 ?>
-<!doctype html>
-<html lang="id">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Invoice</title>
-<style>
-body{font-family:Arial,sans-serif;background:#f6f8fb;margin:0;color:#1f2937}.wrap{max-width:1280px;margin:24px auto;padding:0 16px}.card{background:#fff;border-radius:18px;padding:20px;box-shadow:0 8px 24px rgba(0,0,0,.06);margin-bottom:18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.full{grid-column:1/-1}input,select,textarea,button{width:100%;padding:11px 12px;border:1px solid #d1d5db;border-radius:12px;box-sizing:border-box}button,.btn{background:#111827;color:#fff;border:none;text-decoration:none;display:inline-block;text-align:center;cursor:pointer}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:14px}.small{font-size:12px;color:#6b7280}.actions a{margin-right:6px;text-decoration:none;padding:7px 10px;border-radius:10px;background:#eef2ff;color:#1e3a8a;display:inline-block}.row{display:flex;gap:10px;flex-wrap:wrap}.item-row{display:grid;grid-template-columns:2fr .8fr 1fr 1fr auto;gap:10px;margin-bottom:10px}@media(max-width:900px){.grid,.item-row{grid-template-columns:1fr}}
-</style>
-<script>
-function formatNumberInput(v){ return parseFloat(v||0) || 0; }
-function hitungTotal(){
-    let subtotal = 0;
-    document.querySelectorAll('.item-row').forEach(function(row){
-        const qty = formatNumberInput(row.querySelector('.qty').value);
-        const harga = formatNumberInput(row.querySelector('.harga').value);
-        const st = qty * harga;
-        row.querySelector('.subtotal').value = st.toFixed(2);
-        subtotal += st;
-    });
-    document.getElementById('subtotal').value = subtotal.toFixed(2);
-    const diskon = formatNumberInput(document.getElementById('diskon').value);
-    document.getElementById('total').value = Math.max(0, subtotal - diskon).toFixed(2);
-}
-function tambahItem(nama='', qty='1', harga='0', subtotal='0', ket=''){
-    const wrap = document.getElementById('items-wrap');
-    const div = document.createElement('div');
-    div.className = 'item-row';
-    div.innerHTML = `
-        <input type="text" name="nama_item[]" placeholder="Nama tindakan / item" value="${nama}">
-        <input type="number" step="0.01" class="qty" name="qty[]" value="${qty}" oninput="hitungTotal()">
-        <input type="number" step="0.01" class="harga" name="harga[]" value="${harga}" oninput="hitungTotal()">
-        <input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="${subtotal}" readonly>
-        <button type="button" onclick="this.parentElement.remove();hitungTotal()" style="background:#dc2626">Hapus</button>
-        <input type="text" name="keterangan_item[]" placeholder="Keterangan item" value="${ket}" style="grid-column:1/-1">
-    `;
-    wrap.appendChild(div);
-    hitungTotal();
-}
-window.addEventListener('DOMContentLoaded', function(){
-    if(document.querySelectorAll('.item-row').length===0){ tambahItem(); }
-    hitungTotal();
-});
-</script>
-</head>
-<body>
-<div class="wrap">
-    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:16px">
-        <div>
-            <h1 style="margin:0">Invoice</h1>
-            <div class="small"><?= $pasien ? 'Pasien: ' . e($pasien['no_rm']) . ' - ' . e($pasien['nama']) : 'Semua invoice' ?></div>
-        </div>
-        <div class="row">
-            <a class="btn" style="padding:11px 16px" href="pasien.php">Pasien</a>
-            <a class="btn" style="padding:11px 16px;background:#4b5563" href="dashboard.php">Dashboard</a>
-        </div>
-    </div>
-
-    <div class="card">
-        <?php flash_message(); ?>
-        <h2 style="margin-top:0"><?= $editData ? 'Edit Invoice' : 'Buat Invoice' ?></h2>
-        <form method="post" action="simpan_invoice.php">
-            <input type="hidden" name="id" value="<?= (int)($editData['id'] ?? 0) ?>">
-            <div class="grid">
-                <div>
-                    <label>No Invoice</label>
-                    <input type="text" name="no_invoice" required value="<?= e($editData['no_invoice'] ?? next_invoice_no()) ?>">
-                </div>
-                <div>
-                    <label>Tanggal</label>
-                    <input type="datetime-local" name="tanggal" required value="<?= e(isset($editData['tanggal']) ? date('Y-m-d\TH:i', strtotime($editData['tanggal'])) : date('Y-m-d\TH:i')) ?>">
-                </div>
-                <div>
-                    <label>Pasien</label>
-                    <select name="pasien_id" required onchange="window.location='invoice.php?pasien_id='+this.value">
-                        <option value="">Pilih pasien</option>
-                        <?php foreach ($pasienList as $p): ?>
-                            <option value="<?= (int)$p['id'] ?>" <?= ((int)($editData['pasien_id'] ?? $pasienId) === (int)$p['id']) ? 'selected' : '' ?>><?= e($p['no_rm']) ?> - <?= e($p['nama']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div>
-                    <label>Kunjungan</label>
-                    <select name="kunjungan_id">
-                        <option value="">Tanpa kunjungan</option>
-                        <?php foreach ($kunjunganList as $k): ?>
-                            <option value="<?= (int)$k['id'] ?>" <?= ((int)($editData['kunjungan_id'] ?? $kunjunganId) === (int)$k['id']) ? 'selected' : '' ?>><?= e($k['tanggal']) ?> - <?= e($k['diagnosa'] ?: $k['tindakan']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div>
-                    <label>Status Pembayaran</label>
-                    <select name="status_bayar">
-                        <?php $sb = $editData['status_bayar'] ?? 'belum terbayar'; foreach (['lunas','pending','belum terbayar'] as $s): ?>
-                        <option value="<?= e($s) ?>" <?= $sb === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div>
-                    <label>Metode Pembayaran</label>
-                    <select name="metode_bayar">
-                        <?php $mb = $editData['metode_bayar'] ?? 'tunai'; foreach (['tunai','transfer','debit','kartu kredit','qris'] as $m): ?>
-                        <option value="<?= e($m) ?>" <?= $mb === $m ? 'selected' : '' ?>><?= strtoupper($m) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-            </div>
-
-            <div class="card" style="margin-top:16px;background:#f9fafb">
-                <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">
-                    <h3 style="margin:0">Item Invoice</h3>
-                    <button type="button" onclick="tambahItem()" style="width:auto;padding:11px 16px">Tambah Item</button>
-                </div>
-                <div id="items-wrap">
-                    <?php foreach ($editItems as $it): ?>
-                    <div class="item-row">
-                        <input type="text" name="nama_item[]" placeholder="Nama tindakan / item" value="<?= e($it['nama_item']) ?>">
-                        <input type="number" step="0.01" class="qty" name="qty[]" value="<?= e($it['qty']) ?>" oninput="hitungTotal()">
-                        <input type="number" step="0.01" class="harga" name="harga[]" value="<?= e($it['harga']) ?>" oninput="hitungTotal()">
-                        <input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="<?= e($it['subtotal']) ?>" readonly>
-                        <button type="button" onclick="this.parentElement.remove();hitungTotal()" style="background:#dc2626">Hapus</button>
-                        <input type="text" name="keterangan_item[]" placeholder="Keterangan item" value="<?= e($it['keterangan']) ?>" style="grid-column:1/-1">
-                    </div>
-                    <?php endforeach; ?>
-                </div>
-            </div>
-
-            <div class="grid">
-                <div>
-                    <label>Subtotal</label>
-                    <input type="number" step="0.01" id="subtotal" name="subtotal" readonly value="<?= e($editData['subtotal'] ?? '0') ?>">
-                </div>
-                <div>
-                    <label>Diskon</label>
-                    <input type="number" step="0.01" id="diskon" name="diskon" oninput="hitungTotal()" value="<?= e($editData['diskon'] ?? '0') ?>">
-                </div>
-                <div>
-                    <label>Total</label>
-                    <input type="number" step="0.01" id="total" name="total" readonly value="<?= e($editData['total'] ?? '0') ?>">
-                </div>
-                <div class="full">
-                    <label>Catatan</label>
-                    <textarea name="catatan" rows="3"><?= e($editData['catatan'] ?? '') ?></textarea>
-                </div>
-            </div>
-            <div class="row" style="margin-top:16px">
-                <button type="submit" style="width:auto;padding:11px 16px">Simpan Invoice</button>
-                <?php if ($editData): ?><a class="btn" style="padding:11px 16px;width:auto;background:#2563eb" href="invoice_pdf.php?id=<?= (int)$editData['id'] ?>" target="_blank">Cetak PDF / Print</a><?php endif; ?>
-            </div>
-        </form>
-    </div>
-
-    <div class="card">
-        <h2 style="margin-top:0">Riwayat Invoice</h2>
-        <div style="overflow:auto">
-            <table class="table">
-                <thead><tr><th>No Invoice</th><th>Tanggal</th><th>Pasien</th><th>Total</th><th>Status</th><th>Metode</th><th>Aksi</th></tr></thead>
-                <tbody>
-                <?php foreach ($invoiceList as $inv): ?>
-                    <tr>
-                        <td><?= e($inv['no_invoice']) ?></td>
-                        <td><?= e($inv['tanggal']) ?></td>
-                        <td><strong><?= e($inv['no_rm']) ?></strong><br><?= e($inv['nama']) ?></td>
-                        <td>Rp <?= number_format((float)$inv['total'], 0, ',', '.') ?></td>
-                        <td><?= e($inv['status_bayar']) ?></td>
-                        <td><?= e($inv['metode_bayar']) ?></td>
-                        <td class="actions">
-                            <a href="invoice.php?edit=<?= (int)$inv['id'] ?>">Edit</a>
-                            <a href="invoice_pdf.php?id=<?= (int)$inv['id'] ?>" target="_blank">Print</a>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                <?php if (!$invoiceList): ?><tr><td colspan="7">Belum ada invoice.</td></tr><?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-</body>
-</html>
+<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Billing & Invoice</title><style>*{box-sizing:border-box;font-family:Inter,Arial,sans-serif}body{margin:0;background:#f8fbff;color:#0f172a}.wrap{max-width:1400px;margin:0 auto;padding:24px}.card{background:#fff;border:1px solid #e2e8f0;border-radius:24px;padding:22px;box-shadow:0 14px 30px rgba(15,23,42,.06);margin-bottom:18px}.head,.row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.full{grid-column:1/-1}input,select,textarea,button{width:100%;padding:13px 14px;border:1px solid #cbd5e1;border-radius:14px}.btn,button{background:#0f172a;color:#fff;text-decoration:none;display:inline-block;text-align:center;border:none;font-weight:700;cursor:pointer}.btn.secondary{background:#475569}.table-wrap{overflow:auto}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}.item-row{display:grid;grid-template-columns:2fr .9fr 1fr 1fr 1fr auto;gap:10px;margin-bottom:10px;align-items:start}.small{color:#64748b;font-size:13px}.badge{display:inline-block;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:700}.lunas{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}.belum{background:#fee2e2;color:#991b1b}.qris-box{padding:14px;border:1px dashed #94a3b8;border-radius:18px;background:#f8fafc}@media(max-width:980px){.grid,.item-row{grid-template-columns:1fr}}</style><script>
+const tindakanHarga={<?php foreach($tindakanList as $t){ echo json_encode((string)$t['id']).':'.json_encode((float)$t['harga']).','; } ?>};
+const tindakanNama={<?php foreach($tindakanList as $t){ echo json_encode((string)$t['id']).':'.json_encode($t['nama_tindakan']).','; } ?>};
+function n(v){ return parseFloat(v||0)||0; }
+function hitungTotal(){ let subtotal=0; document.querySelectorAll('.item-row').forEach(function(row){ let qty=n(row.querySelector('.qty').value), harga=n(row.querySelector('.harga').value); let st=qty*harga; row.querySelector('.subtotal').value=st.toFixed(2); subtotal+=st; }); document.getElementById('subtotal').value=subtotal.toFixed(2); let diskon=n(document.getElementById('diskon').value); document.getElementById('total').value=Math.max(0, subtotal-diskon).toFixed(2); }
+function tambahItem(nama='',qty='1',harga='0',subtotal='0',ket='',gigi='',tid=''){ const wrap=document.getElementById('items-wrap'); const div=document.createElement('div'); div.className='item-row'; div.innerHTML=`<select class="tindakan_select" onchange="pilihTindakan(this)"><option value="">Katalog tindakan</option><?php foreach($tindakanList as $t): ?><option value="<?= (int)$t['id'] ?>"><?= e($t['nama_tindakan']) ?> • <?= e(rupiah($t['harga'])) ?></option><?php endforeach; ?></select><input type="text" name="nama_item[]" placeholder="Nama tindakan / item" value="${nama}"><input type="number" step="0.01" class="qty" name="qty[]" value="${qty}" oninput="hitungTotal()"><input type="number" step="0.01" class="harga" name="harga[]" value="${harga}" oninput="hitungTotal()"><input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="${subtotal}" readonly><button type="button" onclick="this.parentElement.remove();hitungTotal()" style="background:#dc2626">Hapus</button><input type="hidden" name="tindakan_id[]" value="${tid}"><input type="text" name="nomor_gigi[]" placeholder="Nomor gigi" value="${gigi}" style="grid-column:1/2"><input type="text" name="keterangan_item[]" placeholder="Keterangan item" value="${ket}" style="grid-column:2/-1">`; wrap.appendChild(div); hitungTotal(); }
+function pilihTindakan(sel){ const row=sel.parentElement; const id=sel.value; if(!id) return; row.querySelector('input[name="tindakan_id[]"]').value=id; row.querySelector('input[name="nama_item[]"]').value=tindakanNama[id]||''; row.querySelector('.harga').value=tindakanHarga[id]||0; hitungTotal(); }
+window.addEventListener('DOMContentLoaded',()=>{ if(document.querySelectorAll('.item-row').length===0) tambahItem(); hitungTotal(); });
+</script></head><body><div class="wrap"><div class="head"><div><h1 style="margin:0 0 8px">Billing & Invoice</h1><div class="small"><?= $pasien ? 'Pasien: '.e($pasien['no_rm']).' - '.e($pasien['nama']) : 'Seluruh invoice pasien' ?></div></div><div class="row"><a class="btn secondary" href="dashboard.php">Dashboard</a><a class="btn" href="pasien.php">Data Pasien</a></div></div>
+<div class="card"><?php flash_message(); ?><h2 style="margin-top:0"><?= $editData ? 'Edit Invoice' : 'Buat Invoice' ?></h2><form method="post" action="simpan_invoice.php"><input type="hidden" name="id" value="<?= (int)($editData['id'] ?? 0) ?>"><div class="grid"><div><label>No Invoice</label><input type="text" name="no_invoice" required value="<?= e($editData['no_invoice'] ?? next_invoice_no()) ?>"></div><div><label>Tanggal</label><input type="datetime-local" name="tanggal" required value="<?= e(isset($editData['tanggal']) ? date('Y-m-d\TH:i', strtotime($editData['tanggal'])) : date('Y-m-d\TH:i')) ?>"></div><div><label>Pasien</label><select name="pasien_id" required onchange="window.location='invoice.php?pasien_id='+this.value"><option value="">Pilih pasien</option><?php foreach($pasienList as $p): ?><option value="<?= (int)$p['id'] ?>" <?= ((int)($editData['pasien_id'] ?? $pasienId) === (int)$p['id']) ? 'selected' : '' ?>><?= e($p['no_rm']) ?> - <?= e($p['nama']) ?></option><?php endforeach; ?></select></div><div><label>Kunjungan</label><select name="kunjungan_id"><option value="">Tanpa kunjungan</option><?php foreach($kunjunganList as $k): ?><option value="<?= (int)$k['id'] ?>" <?= ((int)($editData['kunjungan_id'] ?? $kunjunganId) === (int)$k['id']) ? 'selected' : '' ?>><?= e($k['tanggal']) ?> - <?= e($k['diagnosa'] ?: $k['tindakan']) ?></option><?php endforeach; ?></select></div><div><label>Status Pembayaran</label><?php $sb=$editData['status_bayar'] ?? 'pending'; ?><select name="status_bayar"><?php foreach(['lunas','pending','belum terbayar'] as $s): ?><option value="<?= e($s) ?>" <?= $sb===$s?'selected':'' ?>><?= ucfirst($s) ?></option><?php endforeach; ?></select></div><div><label>Metode Pembayaran</label><?php $mb=$editData['metode_bayar'] ?? 'qris'; ?><select name="metode_bayar"><?php foreach(['qris','tunai','transfer','debit','kartu kredit'] as $m): ?><option value="<?= e($m) ?>" <?= $mb===$m?'selected':'' ?>><?= strtoupper($m) ?></option><?php endforeach; ?></select></div></div>
+<div class="card" style="margin-top:16px;background:#f8fbff"><div class="row"><h3 style="margin:0">Item Invoice</h3><button type="button" onclick="tambahItem()" style="width:auto;padding:13px 18px">Tambah Item</button></div><div id="items-wrap" style="margin-top:12px"><?php foreach($editItems as $it): ?><div class="item-row"><select class="tindakan_select" onchange="pilihTindakan(this)"><option value="">Katalog tindakan</option><?php foreach($tindakanList as $t): ?><option value="<?= (int)$t['id'] ?>" <?= ((int)($it['tindakan_id'] ?? 0)===(int)$t['id'])?'selected':'' ?>><?= e($t['nama_tindakan']) ?> • <?= e(rupiah($t['harga'])) ?></option><?php endforeach; ?></select><input type="text" name="nama_item[]" value="<?= e($it['nama_item']) ?>"><input type="number" step="0.01" class="qty" name="qty[]" value="<?= e($it['qty']) ?>" oninput="hitungTotal()"><input type="number" step="0.01" class="harga" name="harga[]" value="<?= e($it['harga']) ?>" oninput="hitungTotal()"><input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="<?= e($it['subtotal']) ?>" readonly><button type="button" onclick="this.parentElement.remove();hitungTotal()" style="background:#dc2626">Hapus</button><input type="hidden" name="tindakan_id[]" value="<?= (int)($it['tindakan_id'] ?? 0) ?>"><input type="text" name="nomor_gigi[]" placeholder="Nomor gigi" value="<?= e($it['nomor_gigi'] ?? '') ?>" style="grid-column:1/2"><input type="text" name="keterangan_item[]" value="<?= e($it['keterangan']) ?>" style="grid-column:2/-1"></div><?php endforeach; ?></div></div>
+<div class="grid"><div><label>Subtotal</label><input type="number" step="0.01" id="subtotal" name="subtotal" readonly value="<?= e($editData['subtotal'] ?? '0') ?>"></div><div><label>Diskon</label><input type="number" step="0.01" id="diskon" name="diskon" value="<?= e($editData['diskon'] ?? '0') ?>" oninput="hitungTotal()"></div><div><label>Total</label><input type="number" step="0.01" id="total" name="total" readonly value="<?= e($editData['total'] ?? '0') ?>"></div><div class="qris-box"><strong>QRIS</strong><div class="small" style="margin-top:8px">Metode QRIS selalu tersedia. Jika Anda punya gambar QRIS statis, isi <code>QRIS_IMAGE_URL</code> di <code>bootstrap.php</code>.</div><?php if(QRIS_IMAGE_URL): ?><div style="margin-top:10px"><img src="<?= e(QRIS_IMAGE_URL) ?>" alt="QRIS" style="max-width:180px;border-radius:16px"></div><?php else: ?><div style="margin-top:10px;padding:12px;border-radius:12px;background:#fff;border:1px dashed #cbd5e1">QRIS siap dipakai. Tambahkan URL gambar QRIS di bootstrap.php untuk menampilkan kode QR.</div><?php endif; ?></div><div class="full"><label>Catatan</label><textarea name="catatan" rows="3"><?= e($editData['catatan'] ?? '') ?></textarea></div></div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px"><button type="submit" style="width:auto;padding:13px 18px">Simpan Invoice</button><?php if($editData): ?><a class="btn" style="padding:13px 18px;background:#2563eb" href="invoice_pdf.php?id=<?= (int)$editData['id'] ?>" target="_blank">Print / Save PDF</a><?php endif; ?><a class="btn secondary" style="padding:13px 18px" href="dashboard.php">Kembali Dashboard</a></div></form></div>
+<div class="card"><h2 style="margin-top:0">Riwayat Invoice</h2><div class="table-wrap"><table class="table"><thead><tr><th>No Invoice</th><th>Tanggal</th><th>Pasien</th><th>Total</th><th>Status</th><th>Metode</th><th>Aksi</th></tr></thead><tbody><?php foreach($invoiceList as $inv): ?><tr><td><?= e($inv['no_invoice']) ?></td><td><?= e($inv['tanggal']) ?></td><td><strong><?= e($inv['no_rm']) ?></strong><div class="small"><?= e($inv['nama']) ?></div></td><td><?= e(rupiah($inv['total'])) ?></td><td><?php $st=strtolower($inv['status_bayar']); $cls=$st==='lunas'?'lunas':($st==='pending'?'pending':'belum'); ?><span class="badge <?= e($cls) ?>"><?= e($inv['status_bayar']) ?></span></td><td><?= e(strtoupper($inv['metode_bayar'])) ?></td><td><a class="btn" style="padding:9px 12px" href="invoice.php?edit=<?= (int)$inv['id'] ?>">Edit</a> <a class="btn secondary" style="padding:9px 12px" href="invoice_pdf.php?id=<?= (int)$inv['id'] ?>" target="_blank">Print</a></td></tr><?php endforeach; if(!$invoiceList): ?><tr><td colspan="7">Belum ada invoice.</td></tr><?php endif; ?></tbody></table></div></div></div></body></html>

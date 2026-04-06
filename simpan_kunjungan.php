@@ -1,34 +1,26 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
-
-try {
-    $id = (int)($_POST['id'] ?? 0);
-    $pasien_id = (int)($_POST['pasien_id'] ?? 0);
-    $tanggal = trim($_POST['tanggal'] ?? '');
-    $keluhan = trim($_POST['keluhan'] ?? '');
-    $diagnosa = trim($_POST['diagnosa'] ?? '');
-    $odontogram = trim($_POST['odontogram'] ?? '');
-    $tindakan = trim($_POST['tindakan'] ?? '');
-    $dokter = trim($_POST['dokter'] ?? '');
-    $catatan = trim($_POST['catatan'] ?? '');
-
-    if ($pasien_id <= 0 || $tanggal === '') {
-        throw new Exception('Pasien dan tanggal kunjungan wajib diisi.');
-    }
-
-    $tanggal = str_replace('T', ' ', $tanggal) . ':00';
-
-    if ($id > 0) {
-        db_execute("UPDATE kunjungan SET pasien_id=?, tanggal=?, keluhan=?, diagnosa=?, odontogram=?, tindakan=?, dokter=?, catatan=? WHERE id=?", [
-            $pasien_id, $tanggal, $keluhan, $diagnosa, $odontogram, $tindakan, $dokter, $catatan, $id
-        ]);
-        redirect_with_message('kunjungan.php?pasien_id=' . $pasien_id, 'Kunjungan berhasil diperbarui.');
-    } else {
-        db_execute("INSERT INTO kunjungan (pasien_id, tanggal, keluhan, diagnosa, odontogram, tindakan, dokter, catatan) VALUES (?,?,?,?,?,?,?,?)", [
-            $pasien_id, $tanggal, $keluhan, $diagnosa, $odontogram, $tindakan, $dokter, $catatan
-        ]);
-        redirect_with_message('kunjungan.php?pasien_id=' . $pasien_id, 'Kunjungan berhasil ditambahkan.');
-    }
-} catch (Throwable $e) {
-    redirect_with_message('kunjungan.php?pasien_id=' . (int)($_POST['pasien_id'] ?? 0), 'Gagal simpan kunjungan: ' . $e->getMessage(), 'danger');
+ensure_logged_in();
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') { header('Location: kunjungan.php'); exit; }
+$id = (int)($_POST['id'] ?? 0);
+$pasien_id = (int)($_POST['pasien_id'] ?? 0);
+$tanggal = trim($_POST['tanggal'] ?? '');
+$keluhan = trim($_POST['keluhan'] ?? '');
+$icd10_code = trim($_POST['icd10_code'] ?? '');
+$diagnosa = trim($_POST['diagnosa'] ?? '');
+$dokter = trim($_POST['dokter'] ?? current_user_name());
+$tindakan = trim($_POST['tindakan'] ?? '');
+$catatan = trim($_POST['catatan'] ?? '');
+if ($pasien_id <= 0 || $tanggal === '') { $_SESSION['error'] = 'Pasien dan tanggal kunjungan wajib diisi.'; header('Location: kunjungan.php'.($id ? '?edit='.$id : '')); exit; }
+if ($icd10_code !== '' && $diagnosa === '') {
+    $icd = db_fetch_one("SELECT * FROM icd10 WHERE kode=?", [$icd10_code]);
+    if ($icd) $diagnosa = $icd['kode'].' - '.$icd['diagnosis'];
 }
+if ($id > 0) {
+    $ok = db_run("UPDATE kunjungan SET pasien_id=?, tanggal=?, keluhan=?, diagnosa=?, icd10_code=?, dokter=?, tindakan=?, catatan=? WHERE id=?", [$pasien_id,$tanggal,$keluhan,$diagnosa,$icd10_code,$dokter,$tindakan,$catatan,$id]);
+    $_SESSION[$ok ? 'success' : 'error'] = $ok ? 'Kunjungan berhasil diperbarui.' : 'Gagal memperbarui kunjungan.';
+} else {
+    $newId = db_insert("INSERT INTO kunjungan (pasien_id, tanggal, keluhan, diagnosa, icd10_code, dokter, tindakan, catatan) VALUES (?,?,?,?,?,?,?,?)", [$pasien_id,$tanggal,$keluhan,$diagnosa,$icd10_code,$dokter,$tindakan,$catatan]);
+    $_SESSION[$newId ? 'success' : 'error'] = $newId ? 'Kunjungan berhasil disimpan.' : 'Gagal menyimpan kunjungan.';
+}
+header('Location: kunjungan.php?pasien_id='.$pasien_id); exit;
