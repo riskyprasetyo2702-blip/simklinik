@@ -134,3 +134,49 @@ function get_icd10_list() {
         ['code' => 'Z01.2', 'name' => 'Dental examination'],
     ];
 }
+// ================= QUERY FUNCTION =================
+
+function db_fetch_all($query, $params = [])
+{
+    $conn = db();
+    if (!$conn) die("Koneksi database tidak ditemukan");
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) die($conn->error);
+
+    if ($params) {
+        $types = str_repeat('s', count($params));
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $data = [];
+    while ($row = $result->fetch_assoc()) {
+        $data[] = $row;
+    }
+
+    return $data;
+}
+
+function db_fetch_one($query, $params = [])
+{
+    $data = db_fetch_all($query, $params);
+    return $data[0] ?? null;
+}
+
+// ================= FLASH MESSAGE =================
+
+function flash_message()
+{
+    if (!empty($_SESSION['success'])) {
+        echo "<div style='background:#d1fae5;padding:10px;border-radius:10px;margin-bottom:10px'>" . $_SESSION['success'] . "</div>";
+        unset($_SESSION['success']);
+    }
+
+    if (!empty($_SESSION['error'])) {
+        echo "<div style='background:#fee2e2;padding:10px;border-radius:10px;margin-bottom:10px'>" . $_SESSION['error'] . "</div>";
+        unset($_SESSION['error']);
+    }
+}
