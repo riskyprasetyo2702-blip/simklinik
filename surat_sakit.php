@@ -27,15 +27,15 @@ if (!$kunjungan) {
 $pasien_id = (int)$kunjungan['pasien_id'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nomor_surat      = trim($_POST['nomor_surat'] ?? next_nomor_surat());
-    $tanggal_surat    = trim($_POST['tanggal_surat'] ?? date('Y-m-d'));
-    $tanggal_mulai    = trim($_POST['tanggal_mulai'] ?? date('Y-m-d'));
-    $tanggal_selesai  = trim($_POST['tanggal_selesai'] ?? date('Y-m-d'));
-    $lama_istirahat   = (int)($_POST['lama_istirahat'] ?? 1);
-    $diagnosis_singkat= trim($_POST['diagnosis_singkat'] ?? '');
-    $keterangan       = trim($_POST['keterangan'] ?? '');
-    $dokter_nama      = trim($_POST['dokter_nama'] ?? 'drg. Andreas Aryo Risky Prasetyo');
-    $dokter_sip       = trim($_POST['dokter_sip'] ?? '');
+    $nomor_surat       = trim($_POST['nomor_surat'] ?? next_nomor_surat());
+    $tanggal_surat     = trim($_POST['tanggal_surat'] ?? date('Y-m-d'));
+    $tanggal_mulai     = trim($_POST['tanggal_mulai'] ?? date('Y-m-d'));
+    $tanggal_selesai   = trim($_POST['tanggal_selesai'] ?? date('Y-m-d'));
+    $lama_istirahat    = (int)($_POST['lama_istirahat'] ?? 1);
+    $diagnosis_singkat = trim($_POST['diagnosis_singkat'] ?? '');
+    $keterangan        = trim($_POST['keterangan'] ?? '');
+    $dokter_nama       = trim($_POST['dokter_nama'] ?? 'drg. Andreas Aryo Risky Prasetyo');
+    $dokter_sip        = trim($_POST['dokter_sip'] ?? '');
 
     $existing = db_fetch_one("SELECT id FROM surat_sakit WHERE kunjungan_id = ?", [$kunjungan_id]);
 
@@ -98,6 +98,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $data = db_fetch_one("SELECT * FROM surat_sakit WHERE kunjungan_id = ?", [$kunjungan_id]);
+
+// isi default kalau belum ada data tersimpan
+if (!$data) {
+    $data = [
+        'nomor_surat' => next_nomor_surat(),
+        'tanggal_surat' => date('Y-m-d'),
+        'tanggal_mulai' => date('Y-m-d'),
+        'tanggal_selesai' => date('Y-m-d'),
+        'lama_istirahat' => 1,
+        'diagnosis_singkat' => $kunjungan['diagnosa'] ?? '',
+        'keterangan' => 'Pasien dianjurkan istirahat untuk pemulihan kondisi kesehatan.',
+        'dokter_nama' => $kunjungan['dokter'] ?? 'drg. Andreas Aryo Risky Prasetyo',
+        'dokter_sip' => ''
+    ];
+}
 ?>
 <!doctype html>
 <html lang="id">
@@ -146,7 +161,7 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
             <div class="grid">
                 <div>
                     <label>Nomor Surat</label>
-                    <input type="text" name="nomor_surat" value="<?= e($data['nomor_surat'] ?? next_nomor_surat()) ?>">
+                    <input type="text" name="nomor_surat" value="<?= e($data['nomor_surat'] ?? '') ?>">
                 </div>
                 <div>
                     <label>Tanggal Surat</label>
@@ -166,11 +181,11 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
                 </div>
                 <div>
                     <label>Diagnosis Singkat</label>
-                    <input type="text" name="diagnosis_singkat" value="<?= e($data['diagnosis_singkat'] ?? $kunjungan['diagnosa'] ?? '') ?>">
+                    <input type="text" name="diagnosis_singkat" value="<?= e($data['diagnosis_singkat'] ?? '') ?>">
                 </div>
                 <div class="full">
                     <label>Keterangan</label>
-                    <textarea name="keterangan" rows="3"><?= e($data['keterangan'] ?? 'Pasien dianjurkan istirahat untuk pemulihan kondisi kesehatan.') ?></textarea>
+                    <textarea name="keterangan" rows="3"><?= e($data['keterangan'] ?? '') ?></textarea>
                 </div>
                 <div>
                     <label>Nama Dokter</label>
@@ -194,19 +209,17 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
             <div><?= e(KLINIK_TELP) ?></div>
             <hr>
             <h3 style="margin:0">SURAT SAKIT</h3>
-            <div>Nomor: <?= e($data['nomor_surat'] ?? next_nomor_surat()) ?></div>
+            <div>Nomor: <?= e($data['nomor_surat'] ?? '') ?></div>
         </div>
 
-        <p style="margin-top:24px">
-            Yang bertanda tangan di bawah ini menerangkan bahwa:
-        </p>
+        <p style="margin-top:24px">Yang bertanda tangan di bawah ini menerangkan bahwa:</p>
 
         <table style="width:100%;border-collapse:collapse">
             <tr><td style="width:180px;padding:4px 0">Nama</td><td>: <?= e($kunjungan['nama']) ?></td></tr>
             <tr><td style="padding:4px 0">No. RM</td><td>: <?= e($kunjungan['no_rm']) ?></td></tr>
             <tr><td style="padding:4px 0">Jenis Kelamin</td><td>: <?= e($kunjungan['jk']) ?></td></tr>
             <tr><td style="padding:4px 0">Alamat</td><td>: <?= e($kunjungan['alamat']) ?></td></tr>
-            <tr><td style="padding:4px 0">Diagnosis</td><td>: <?= e($data['diagnosis_singkat'] ?? $kunjungan['diagnosa'] ?? '-') ?></td></tr>
+            <tr><td style="padding:4px 0">Diagnosis</td><td>: <?= e($data['diagnosis_singkat'] ?? '-') ?></td></tr>
         </table>
 
         <p>
@@ -215,13 +228,9 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
             sampai dengan <strong><?= e($data['tanggal_selesai'] ?? date('Y-m-d')) ?></strong>.
         </p>
 
-        <p>
-            <?= nl2br(e($data['keterangan'] ?? 'Pasien dianjurkan istirahat untuk pemulihan kondisi kesehatan.')) ?>
-        </p>
+        <p><?= nl2br(e($data['keterangan'] ?? '')) ?></p>
 
-        <p>
-            Demikian surat keterangan ini dibuat untuk dapat dipergunakan sebagaimana mestinya.
-        </p>
+        <p>Demikian surat keterangan ini dibuat untuk dapat dipergunakan sebagaimana mestinya.</p>
 
         <div style="margin-top:40px;text-align:right">
             <div><?= e($data['tanggal_surat'] ?? date('Y-m-d')) ?></div>
