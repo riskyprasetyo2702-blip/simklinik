@@ -5,30 +5,65 @@ if (session_status() === PHP_SESSION_NONE) {
 
 require_once __DIR__ . '/config.php';
 
+/*
+|--------------------------------------------------------------------------
+| Ambil koneksi database dari config.php
+|--------------------------------------------------------------------------
+*/
 function db() {
     global $conn, $koneksi, $mysqli, $db, $pdo;
+
     if (isset($conn) && $conn instanceof mysqli) return $conn;
     if (isset($koneksi) && $koneksi instanceof mysqli) return $koneksi;
     if (isset($mysqli) && $mysqli instanceof mysqli) return $mysqli;
     if (isset($db) && $db instanceof mysqli) return $db;
+
     return null;
 }
 
+/*
+|--------------------------------------------------------------------------
+| Helper dasar
+|--------------------------------------------------------------------------
+*/
 function e($str) {
-    return htmlspecialchars((string)$str, ENT_QUOTES, 'UTF-8');
+    return htmlspecialchars((string)($str ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
 function ensure_logged_in() {
-    if (!isset($_SESSION['user_id']) && !isset($_SESSION['username'])) {
+    if (
+        !isset($_SESSION['user_id']) &&
+        !isset($_SESSION['username']) &&
+        !isset($_SESSION['nama']) &&
+        !isset($_SESSION['user'])
+    ) {
         header('Location: login.php');
         exit;
     }
 }
 
 function current_user_name() {
-    return $_SESSION['username'] ?? 'Administrator';
+    if (!empty($_SESSION['username'])) return $_SESSION['username'];
+    if (!empty($_SESSION['nama'])) return $_SESSION['nama'];
+    if (!empty($_SESSION['name'])) return $_SESSION['name'];
+
+    if (!empty($_SESSION['user'])) {
+        if (is_array($_SESSION['user']) && !empty($_SESSION['user']['username'])) {
+            return $_SESSION['user']['username'];
+        }
+        if (is_string($_SESSION['user'])) {
+            return $_SESSION['user'];
+        }
+    }
+
+    return 'Administrator';
 }
 
+/*
+|--------------------------------------------------------------------------
+| Utility cek tabel / kolom
+|--------------------------------------------------------------------------
+*/
 function table_exists(mysqli $conn, $table) {
     $table = $conn->real_escape_string($table);
     $res = $conn->query("SHOW TABLES LIKE '$table'");
@@ -42,6 +77,84 @@ function column_exists(mysqli $conn, $table, $column) {
     return $res && $res->num_rows > 0;
 }
 
+/*
+|--------------------------------------------------------------------------
+| Query helper yang dipakai pasien.php / kunjungan.php / invoice.php
+|--------------------------------------------------------------------------
+*/
+function db_fetch_all($query, $params = []) {
+    $conn = db();
+
+    if (!$conn) {
+        return [];
+    }
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) {
+        return [];
+    }
+
+    if (!empty($params)) {
+        $types = '';
+
+        foreach ($params as $p) {
+            if (is_int($p)) {
+                $types .= 'i';
+            } elseif (is_float($p)) {
+                $types .= 'd';
+            } else {
+                $types .= 's';
+            }
+        }
+
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $rows = [];
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+    }
+
+    $stmt->close();
+    return $rows;
+}
+
+function db_fetch_one($query, $params = []) {
+    $rows = db_fetch_all($query, $params);
+    return $rows[0] ?? null;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Flash message
+|--------------------------------------------------------------------------
+*/
+function flash_message() {
+    if (!empty($_SESSION['success'])) {
+        echo '<div style="background:#dcfce7;color:#166534;padding:12px 14px;border-radius:12px;margin-bottom:14px;">'
+            . e($_SESSION['success']) .
+            '</div>';
+        unset($_SESSION['success']);
+    }
+
+    if (!empty($_SESSION['error'])) {
+        echo '<div style="background:#fee2e2;color:#991b1b;padding:12px 14px;border-radius:12px;margin-bottom:14px;">'
+            . e($_SESSION['error']) .
+            '</div>';
+        unset($_SESSION['error']);
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Odontogram helper
+|--------------------------------------------------------------------------
+*/
 function ensure_odontogram_tables(mysqli $conn) {
     $conn->query("CREATE TABLE IF NOT EXISTS odontogram (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -74,21 +187,23 @@ function get_pasien_options(mysqli $conn) {
     $out = [];
     if (!table_exists($conn, 'pasien')) return $out;
 
-    $sql = "SELECT * FROM pasien ORDER BY id DESC LIMIT 500";
-    $res = $conn->query($sql);
+    $res = $conn->query("SELECT * FROM pasien ORDER BY id DESC LIMIT 500");
     if (!$res) return $out;
 
     while ($row = $res->fetch_assoc()) {
         $id = $row['id'] ?? null;
         if (!$id) continue;
+
         $nama = $row['nama'] ?? $row['nama_pasien'] ?? $row['nama_lengkap'] ?? ('Pasien #' . $id);
         $no_rm = $row['no_rm'] ?? $row['no_rekam_medis'] ?? $row['rekam_medis'] ?? '';
+
         $out[] = [
             'id' => $id,
             'nama' => $nama,
             'no_rm' => $no_rm,
         ];
     }
+
     return $out;
 }
 
@@ -96,22 +211,24 @@ function get_kunjungan_options(mysqli $conn) {
     $out = [];
     if (!table_exists($conn, 'kunjungan')) return $out;
 
-    $sql = "SELECT * FROM kunjungan ORDER BY id DESC LIMIT 500";
-    $res = $conn->query($sql);
+    $res = $conn->query("SELECT * FROM kunjungan ORDER BY id DESC LIMIT 500");
     if (!$res) return $out;
 
     while ($row = $res->fetch_assoc()) {
         $id = $row['id'] ?? null;
         if (!$id) continue;
+
         $pasien_id = $row['pasien_id'] ?? 0;
         $tanggal = $row['tanggal'] ?? $row['tgl_kunjungan'] ?? $row['created_at'] ?? '';
         $keluhan = $row['keluhan'] ?? $row['keluhan_utama'] ?? '';
+
         $out[] = [
             'id' => $id,
             'pasien_id' => $pasien_id,
             'label' => 'Kunjungan #' . $id . ' - ' . $tanggal . ($keluhan ? ' - ' . $keluhan : '')
         ];
     }
+
     return $out;
 }
 
@@ -133,103 +250,4 @@ function get_icd10_list() {
         ['code' => 'K12.0', 'name' => 'Recurrent oral aphthae'],
         ['code' => 'Z01.2', 'name' => 'Dental examination'],
     ];
-}
-// ================= QUERY FUNCTION =================
-
-function db_fetch_all($query, $params = [])
-{
-    $conn = db();
-    if (!$conn) die("Koneksi database tidak ditemukan");
-
-    $stmt = $conn->prepare($query);
-    if (!$stmt) die($conn->error);
-
-    if ($params) {
-        $types = str_repeat('s', count($params));
-        $stmt->bind_param($types, ...$params);
-    }
-
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    $data = [];
-    while ($row = $result->fetch_assoc()) {
-        $data[] = $row;
-    }
-
-    return $data;
-}
-
-function db_fetch_one($query, $params = [])
-{
-    $data = db_fetch_all($query, $params);
-    return $data[0] ?? null;
-}
-
-// ================= FLASH MESSAGE =================
-
-function flash_message()
-{
-    if (!empty($_SESSION['success'])) {
-        echo "<div style='background:#d1fae5;padding:10px;border-radius:10px;margin-bottom:10px'>" . $_SESSION['success'] . "</div>";
-        unset($_SESSION['success']);
-    }
-
-    if (!empty($_SESSION['error'])) {
-        echo "<div style='background:#fee2e2;padding:10px;border-radius:10px;margin-bottom:10px'>" . $_SESSION['error'] . "</div>";
-        unset($_SESSION['error']);
-    }
-}
-function db_fetch_all($query, $params = [])
-{
-    $conn = db();
-    if (!$conn) {
-        return [];
-    }
-
-    $stmt = $conn->prepare($query);
-    if (!$stmt) {
-        return [];
-    }
-
-    if (!empty($params)) {
-        $types = str_repeat('s', count($params));
-        $stmt->bind_param($types, ...$params);
-    }
-
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    $rows = [];
-    if ($result) {
-        while ($row = $result->fetch_assoc()) {
-            $rows[] = $row;
-        }
-    }
-
-    $stmt->close();
-    return $rows;
-}
-
-function db_fetch_one($query, $params = [])
-{
-    $rows = db_fetch_all($query, $params);
-    return $rows[0] ?? null;
-}
-
-function flash_message()
-{
-    if (!empty($_SESSION['success'])) {
-        echo '<div style="background:#dcfce7;color:#166534;padding:12px 14px;border-radius:12px;margin-bottom:14px;">'
-            . e($_SESSION['success']) .
-            '</div>';
-        unset($_SESSION['success']);
-    }
-
-    if (!empty($_SESSION['error'])) {
-        echo '<div style="background:#fee2e2;color:#991b1b;padding:12px 14px;border-radius:12px;margin-bottom:14px;">'
-            . e($_SESSION['error']) .
-            '</div>';
-        unset($_SESSION['error']);
-    }
 }
