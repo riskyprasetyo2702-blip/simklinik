@@ -5,7 +5,7 @@ ensure_logged_in();
 $conn = db();
 if (!$conn) {
     $_SESSION['error'] = 'Koneksi database gagal.';
-    header('Location: invoice.php');
+    header ('Location: invoice.php');
     exit;
 }
 
