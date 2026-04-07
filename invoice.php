@@ -1,301 +1,252 @@
 <?php
-require_once __DIR__ . '/bootstrap.php';
-ensure_logged_in();
-
-$conn = db();
-if (!$conn) {
-    $_SESSION['error'] = 'Koneksi database gagal.';
-    header('Location: invoice.php');
-    exit;
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
-function to_float($v) {
-    if ($v === null || $v === '') return 0;
-    $v = str_replace(['Rp', 'rp', '.', ' '], '', (string)$v);
-    $v = str_replace(',', '.', $v);
-    return (float)$v;
+require_once __DIR__ . '/config.php';
+
+define('KLINIK_NAMA', 'Klinik Praktek Mandiri Dokter Gigi Andreas Aryo Risky Prasetyo');
+define('KLINIK_ALAMAT', 'Alamat klinik');
+define('KLINIK_TELP', 'Telepon klinik');
+define('QRIS_IMAGE_URL', '');
+define('QRIS_PAYLOAD', '');
+
+function db() {
+    global $conn, $koneksi, $mysqli, $db;
+
+    if (isset($conn) && $conn instanceof mysqli) return $conn;
+    if (isset($koneksi) && $koneksi instanceof mysqli) return $koneksi;
+    if (isset($mysqli) && $mysqli instanceof mysqli) return $mysqli;
+    if (isset($db) && $db instanceof mysqli) return $db;
+
+    return null;
 }
 
-$id            = (int)($_POST['id'] ?? 0);
-$pasienId      = (int)($_POST['pasien_id'] ?? 0);
-$kunjunganId   = (int)($_POST['kunjungan_id'] ?? 0);
-$noInvoice     = trim($_POST['no_invoice'] ?? '');
-$tanggal       = trim($_POST['tanggal'] ?? '');
-$statusBayar   = trim($_POST['status_bayar'] ?? 'pending');
-$metodeBayar   = trim($_POST['metode_bayar'] ?? 'qris');
-$subtotalPost  = to_float($_POST['subtotal'] ?? 0);
-$diskon        = to_float($_POST['diskon'] ?? 0);
-$totalPost     = to_float($_POST['total'] ?? 0);
-$catatan       = trim($_POST['catatan'] ?? '');
-
-$namaItems      = $_POST['nama_item'] ?? [];
-$qtyItems       = $_POST['qty'] ?? [];
-$hargaItems     = $_POST['harga'] ?? [];
-$subtotalItems  = $_POST['subtotal_item'] ?? [];
-$tindakanIds    = $_POST['tindakan_id'] ?? [];
-$nomorGigiItems = $_POST['nomor_gigi'] ?? [];
-$keteranganItem = $_POST['keterangan_item'] ?? [];
-
-if ($pasienId <= 0) {
-    $_SESSION['error'] = 'Pasien wajib dipilih.';
-    header('Location: invoice.php');
-    exit;
-}
-
-if ($noInvoice === '') {
-    $noInvoice = next_invoice_no();
-}
-
-if ($tanggal === '') {
-    $tanggal = date('Y-m-d H:i:s');
-} else {
-    $tanggal = str_replace('T', ' ', $tanggal);
-    if (strlen($tanggal) === 16) {
-        $tanggal .= ':00';
+function ensure_logged_in() {
+    if (
+        !isset($_SESSION['user_id']) &&
+        !isset($_SESSION['username']) &&
+        !isset($_SESSION['nama']) &&
+        !isset($_SESSION['user'])
+    ) {
+        header('Location: login.php');
+        exit;
     }
 }
 
-if (!in_array($statusBayar, ['lunas', 'pending', 'belum terbayar', 'paid'], true)) {
-    $statusBayar = 'pending';
+function current_user_name() {
+    if (!empty($_SESSION['username'])) return $_SESSION['username'];
+    if (!empty($_SESSION['nama'])) return $_SESSION['nama'];
+    if (!empty($_SESSION['user']) && is_string($_SESSION['user'])) return $_SESSION['user'];
+    return 'Administrator';
 }
 
-if (!in_array($metodeBayar, ['qris', 'tunai', 'transfer', 'debit', 'kartu kredit'], true)) {
-    $metodeBayar = 'qris';
+function e($str) {
+    return htmlspecialchars((string)($str ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
-$hasTindakanId = column_exists($conn, 'invoice_items', 'tindakan_id');
-$hasNomorGigi  = column_exists($conn, 'invoice_items', 'nomor_gigi');
-$hasKeterangan = column_exists($conn, 'invoice_items', 'keterangan');
+function flash_message() {
+    if (!empty($_SESSION['success'])) {
+        echo '<div style="background:#dcfce7;color:#166534;padding:12px 14px;border-radius:12px;margin-bottom:14px;">' . e($_SESSION['success']) . '</div>';
+        unset($_SESSION['success']);
+    }
 
-$conn->begin_transaction();
+    if (!empty($_SESSION['error'])) {
+        echo '<div style="background:#fee2e2;color:#991b1b;padding:12px 14px;border-radius:12px;margin-bottom:14px;">' . e($_SESSION['error']) . '</div>';
+        unset($_SESSION['error']);
+    }
+}
 
-try {
-    if ($id > 0) {
-        $existing = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$id]);
-        if (!$existing) {
-            throw new Exception('Invoice tidak ditemukan.');
+function table_exists($conn, $table) {
+    if (!$conn) return false;
+    $table = $conn->real_escape_string($table);
+    $res = $conn->query("SHOW TABLES LIKE '$table'");
+    return $res && $res->num_rows > 0;
+}
+
+function column_exists($conn, $table, $column) {
+    if (!$conn) return false;
+    if (!table_exists($conn, $table)) return false;
+    $table = $conn->real_escape_string($table);
+    $column = $conn->real_escape_string($column);
+    $res = $conn->query("SHOW COLUMNS FROM `$table` LIKE '$column'");
+    return $res && $res->num_rows > 0;
+}
+
+function db_fetch_all($query, $params = array()) {
+    $conn = db();
+    if (!$conn) return array();
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) return array();
+
+    if (!empty($params)) {
+        $types = '';
+        foreach ($params as $p) {
+            if (is_int($p)) {
+                $types .= 'i';
+            } elseif (is_float($p)) {
+                $types .= 'd';
+            } else {
+                $types .= 's';
+            }
         }
+        $stmt->bind_param($types, ...$params);
+    }
 
-        $ok = db_run(
-            "UPDATE invoice
-             SET pasien_id=?, kunjungan_id=?, no_invoice=?, tanggal=?, subtotal=?, diskon=?, total=?, status_bayar=?, metode_bayar=?, catatan=?
-             WHERE id=?",
-            [
-                $pasienId,
-                $kunjunganId > 0 ? $kunjunganId : null,
-                $noInvoice,
-                $tanggal,
-                $subtotalPost,
-                $diskon,
-                $totalPost,
-                $statusBayar,
-                $metodeBayar,
-                $catatan,
-                $id
-            ]
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $rows = array();
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+    }
+
+    $stmt->close();
+    return $rows;
+}
+
+function db_fetch_one($query, $params = array()) {
+    $rows = db_fetch_all($query, $params);
+    return isset($rows[0]) ? $rows[0] : null;
+}
+
+function db_run($query, $params = array()) {
+    $conn = db();
+    if (!$conn) return false;
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) return false;
+
+    if (!empty($params)) {
+        $types = '';
+        foreach ($params as $p) {
+            if (is_int($p)) {
+                $types .= 'i';
+            } elseif (is_float($p)) {
+                $types .= 'd';
+            } else {
+                $types .= 's';
+            }
+        }
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function db_insert($query, $params = array()) {
+    $conn = db();
+    if (!$conn) return false;
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) return false;
+
+    if (!empty($params)) {
+        $types = '';
+        foreach ($params as $p) {
+            if (is_int($p)) {
+                $types .= 'i';
+            } elseif (is_float($p)) {
+                $types .= 'd';
+            } else {
+                $types .= 's';
+            }
+        }
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $ok = $stmt->execute();
+    $id = $ok ? $conn->insert_id : false;
+    $stmt->close();
+
+    return $id;
+}
+
+function rupiah($n) {
+    return 'Rp ' . number_format((float)$n, 0, ',', '.');
+}
+
+function next_rm() {
+    if (!table_exists(db(), 'pasien')) return 'RM000001';
+    $row = db_fetch_one("SELECT no_rm FROM pasien ORDER BY id DESC LIMIT 1");
+    $num = 1;
+    if (!empty($row['no_rm']) && preg_match('/(\d+)$/', $row['no_rm'], $m)) {
+        $num = ((int)$m[1]) + 1;
+    }
+    return 'RM' . str_pad((string)$num, 6, '0', STR_PAD_LEFT);
+}
+
+function next_invoice_no() {
+    if (!table_exists(db(), 'invoice')) {
+        return 'INV-' . date('Ymd') . '-0001';
+    }
+
+    $date = date('Ymd');
+    $row = db_fetch_one("SELECT no_invoice FROM invoice WHERE no_invoice LIKE ? ORDER BY id DESC LIMIT 1", array("INV-$date-%"));
+    $num = 1;
+    if (!empty($row['no_invoice']) && preg_match('/-(\d+)$/', $row['no_invoice'], $m)) {
+        $num = ((int)$m[1]) + 1;
+    }
+    return 'INV-' . $date . '-' . str_pad((string)$num, 4, '0', STR_PAD_LEFT);
+}
+
+function pasien_options() {
+    $conn = db();
+    if (!table_exists($conn, 'pasien')) return array();
+    return db_fetch_all("SELECT id, no_rm, nama FROM pasien ORDER BY nama ASC");
+}
+
+function tindakan_options() {
+    $conn = db();
+    if (!table_exists($conn, 'tindakan')) return array();
+
+    $sql = "SELECT * FROM tindakan";
+    if (column_exists($conn, 'tindakan', 'aktif')) {
+        $sql .= " WHERE aktif='yes'";
+    }
+    $sql .= " ORDER BY id ASC";
+
+    return db_fetch_all($sql);
+}
+
+function icd10_options($keyword = '') {
+    $conn = db();
+    if (!table_exists($conn, 'icd10')) return array();
+
+    if ($keyword !== '') {
+        return db_fetch_all(
+            "SELECT * FROM icd10 WHERE kode LIKE ? OR diagnosis LIKE ? ORDER BY kode ASC LIMIT 100",
+            array("%$keyword%", "%$keyword%")
         );
+    }
 
-        if (!$ok) {
-            throw new Exception('Gagal update invoice.');
-        }
+    return db_fetch_all("SELECT * FROM icd10 ORDER BY kode ASC LIMIT 100");
+}
 
-        $invoiceId = $id;
-        db_run("DELETE FROM invoice_items WHERE invoice_id = ?", [$invoiceId]);
-    } else {
-        $invoiceId = db_insert(
-            "INSERT INTO invoice
-             (pasien_id, kunjungan_id, no_invoice, tanggal, subtotal, diskon, total, status_bayar, metode_bayar, catatan)
-             VALUES (?,?,?,?,?,?,?,?,?,?)",
-            [
-                $pasienId,
-                $kunjunganId > 0 ? $kunjunganId : null,
-                $noInvoice,
-                $tanggal,
-                $subtotalPost,
-                $diskon,
-                $totalPost,
-                $statusBayar,
-                $metodeBayar,
-                $catatan
-            ]
+function sync_invoice_finance($invoiceId) {
+    $conn = db();
+    if (!table_exists($conn, 'invoice') || !table_exists($conn, 'keuangan')) return;
+
+    $inv = db_fetch_one("SELECT * FROM invoice WHERE id = ?", array((int)$invoiceId));
+    if (!$inv) return;
+
+    db_run("DELETE FROM keuangan WHERE invoice_id = ?", array((int)$invoiceId));
+
+    $status = strtolower((string)($inv['status_bayar'] ?? ''));
+    if ($status === 'lunas' || $status === 'paid') {
+        db_insert(
+            "INSERT INTO keuangan (tanggal, jenis, deskripsi, nominal, invoice_id, pasien_id) VALUES (NOW(), 'pemasukan', ?, ?, ?, ?)",
+            array(
+                'Pembayaran invoice ' . ($inv['no_invoice'] ?? ''),
+                (float)($inv['total'] ?? 0),
+                (int)$invoiceId,
+                (int)($inv['pasien_id'] ?? 0)
+            )
         );
-
-        if (!$invoiceId) {
-            throw new Exception('Gagal membuat invoice baru.');
-        }
     }
-
-    $jumlahItemMasuk = 0;
-
-    foreach ($namaItems as $i => $nama) {
-        $nama = trim((string)$nama);
-        if ($nama === '') continue;
-
-        $qty       = to_float($qtyItems[$i] ?? 1);
-        $harga     = to_float($hargaItems[$i] ?? 0);
-        $subtotal  = to_float($subtotalItems[$i] ?? 0);
-        $tindakan  = (int)($tindakanIds[$i] ?? 0);
-        $nomorGigi = trim((string)($nomorGigiItems[$i] ?? ''));
-        $ket       = trim((string)($keteranganItem[$i] ?? ''));
-
-        if ($qty <= 0) $qty = 1;
-        if ($harga < 0) $harga = 0;
-        if ($subtotal <= 0) $subtotal = $qty * $harga;
-
-        if ($hasTindakanId && $hasNomorGigi && $hasKeterangan) {
-            $itemId = db_insert(
-                "INSERT INTO invoice_items
-                 (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, nomor_gigi, keterangan)
-                 VALUES (?,?,?,?,?,?,?,?)",
-                [
-                    $invoiceId,
-                    $tindakan > 0 ? $tindakan : null,
-                    $nama,
-                    $qty,
-                    $harga,
-                    $subtotal,
-                    $nomorGigi,
-                    $ket
-                ]
-            );
-        } elseif ($hasTindakanId && $hasNomorGigi && !$hasKeterangan) {
-            $itemId = db_insert(
-                "INSERT INTO invoice_items
-                 (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, nomor_gigi)
-                 VALUES (?,?,?,?,?,?,?)",
-                [
-                    $invoiceId,
-                    $tindakan > 0 ? $tindakan : null,
-                    $nama,
-                    $qty,
-                    $harga,
-                    $subtotal,
-                    $nomorGigi
-                ]
-            );
-        } elseif ($hasTindakanId && !$hasNomorGigi && $hasKeterangan) {
-            $itemId = db_insert(
-                "INSERT INTO invoice_items
-                 (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, keterangan)
-                 VALUES (?,?,?,?,?,?,?)",
-                [
-                    $invoiceId,
-                    $tindakan > 0 ? $tindakan : null,
-                    $nama,
-                    $qty,
-                    $harga,
-                    $subtotal,
-                    $ket
-                ]
-            );
-        } elseif (!$hasTindakanId && $hasNomorGigi && $hasKeterangan) {
-            $itemId = db_insert(
-                "INSERT INTO invoice_items
-                 (invoice_id, nama_item, qty, harga, subtotal, nomor_gigi, keterangan)
-                 VALUES (?,?,?,?,?,?,?)",
-                [
-                    $invoiceId,
-                    $nama,
-                    $qty,
-                    $harga,
-                    $subtotal,
-                    $nomorGigi,
-                    $ket
-                ]
-            );
-        } elseif ($hasTindakanId && !$hasNomorGigi && !$hasKeterangan) {
-            $itemId = db_insert(
-                "INSERT INTO invoice_items
-                 (invoice_id, tindakan_id, nama_item, qty, harga, subtotal)
-                 VALUES (?,?,?,?,?,?)",
-                [
-                    $invoiceId,
-                    $tindakan > 0 ? $tindakan : null,
-                    $nama,
-                    $qty,
-                    $harga,
-                    $subtotal
-                ]
-            );
-        } elseif (!$hasTindakanId && $hasNomorGigi && !$hasKeterangan) {
-            $itemId = db_insert(
-                "INSERT INTO invoice_items
-                 (invoice_id, nama_item, qty, harga, subtotal, nomor_gigi)
-                 VALUES (?,?,?,?,?,?)",
-                [
-                    $invoiceId,
-                    $nama,
-                    $qty,
-                    $harga,
-                    $subtotal,
-                    $nomorGigi
-                ]
-            );
-        } elseif (!$hasTindakanId && !$hasNomorGigi && $hasKeterangan) {
-            $itemId = db_insert(
-                "INSERT INTO invoice_items
-                 (invoice_id, nama_item, qty, harga, subtotal, keterangan)
-                 VALUES (?,?,?,?,?,?)",
-                [
-                    $invoiceId,
-                    $nama,
-                    $qty,
-                    $harga,
-                    $subtotal,
-                    $ket
-                ]
-            );
-        } else {
-            $itemId = db_insert(
-                "INSERT INTO invoice_items
-                 (invoice_id, nama_item, qty, harga, subtotal)
-                 VALUES (?,?,?,?,?)",
-                [
-                    $invoiceId,
-                    $nama,
-                    $qty,
-                    $harga,
-                    $subtotal
-                ]
-            );
-        }
-
-        if (!$itemId) {
-            throw new Exception('Gagal menyimpan item invoice: ' . $nama);
-        }
-
-        $jumlahItemMasuk++;
-    }
-
-    if ($jumlahItemMasuk <= 0) {
-        throw new Exception('Minimal harus ada 1 item invoice.');
-    }
-
-    $sum = db_fetch_one(
-        "SELECT COALESCE(SUM(subtotal),0) AS subtotal FROM invoice_items WHERE invoice_id=?",
-        [$invoiceId]
-    );
-
-    $subtotalFinal = (float)($sum['subtotal'] ?? 0);
-    $totalFinal = $subtotalFinal - $diskon;
-    if ($totalFinal < 0) $totalFinal = 0;
-
-    db_run(
-        "UPDATE invoice SET subtotal=?, total=? WHERE id=?",
-        [$subtotalFinal, $totalFinal, $invoiceId]
-    );
-
-    sync_invoice_finance($invoiceId);
-
-    $conn->commit();
-
-    $_SESSION['success'] = 'Invoice berhasil disimpan.';
-    header('Location: invoice_pdf.php?id=' . $invoiceId);
-    exit;
-
-} catch (Throwable $e) {
-    $conn->rollback();
-    $_SESSION['error'] = 'Gagal simpan invoice: ' . $e->getMessage();
-    header('Location: invoice.php' . ($id > 0 ? '?edit=' . $id : ''));
-    exit;
 }
