@@ -228,36 +228,25 @@ function icd10_options($keyword = '') {
     return db_fetch_all("SELECT * FROM icd10 ORDER BY kode ASC LIMIT 100");
 }
 
-}function sync_invoice_finance($invoiceId) {
+function sync_invoice_finance($invoiceId) {
     $conn = db();
-    if (!$conn) return;
+    if (!table_exists($conn, 'invoice') || !table_exists($conn, 'keuangan')) return;
 
-    if (!table_exists($conn, 'invoice')) return;
-    if (!table_exists($conn, 'keuangan')) return;
-
-    $inv = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [(int)$invoiceId]);
+    $inv = db_fetch_one("SELECT * FROM invoice WHERE id = ?", array((int)$invoiceId));
     if (!$inv) return;
 
-    // hapus data lama agar tidak double
-    db_run("DELETE FROM keuangan WHERE invoice_id = ?", [(int)$invoiceId]);
+    db_run("DELETE FROM keuangan WHERE invoice_id = ?", array((int)$invoiceId));
 
-    $status = strtolower(trim((string)($inv['status_bayar'] ?? 'pending')));
-
-    // hanya masuk ke keuangan kalau lunas / paid
-    if ($status !== 'lunas' && $status !== 'paid') return;
-
-    db_insert(
-        "INSERT INTO keuangan (tanggal, jenis, deskripsi, nominal, invoice_id, pasien_id)
-         VALUES (?, 'pemasukan', ?, ?, ?, ?)",
-        [
-            !empty($inv['tanggal']) ? $inv['tanggal'] : date('Y-m-d H:i:s'),
-            'Pembayaran invoice ' . ($inv['no_invoice'] ?? ''),
-            (float)($inv['total'] ?? 0),
-            (int)$invoiceId,
-            (int)($inv['pasien_id'] ?? 0)
-        ]
-    );
-
-
+    $status = strtolower((string)($inv['status_bayar'] ?? ''));
+    if ($status === 'lunas' || $status === 'paid') {
+        db_insert(
+            "INSERT INTO keuangan (tanggal, jenis, deskripsi, nominal, invoice_id, pasien_id) VALUES (NOW(), 'pemasukan', ?, ?, ?, ?)",
+            array(
+                'Pembayaran invoice ' . ($inv['no_invoice'] ?? ''),
+                (float)($inv['total'] ?? 0),
+                (int)$invoiceId,
+                (int)($inv['pasien_id'] ?? 0)
+            )
+        );
     }
 }
