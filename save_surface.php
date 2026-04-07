@@ -40,6 +40,7 @@ function ensure_odontogram_tindakan_exists($conn) {
     $conn->query("
         CREATE TABLE IF NOT EXISTS odontogram_tindakan (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            pasien_id INT NOT NULL,
             kunjungan_id INT NOT NULL,
             nomor_gigi VARCHAR(20) NOT NULL,
             surface_code VARCHAR(10) DEFAULT NULL,
@@ -86,18 +87,31 @@ function ensure_invoice_exists_for_visit($pasienId, $kunjunganId) {
 
 function insert_invoice_item_safe($conn, $invoiceId, $tindakanId, $nama, $qty, $harga, $subtotal, $catatan = '') {
     $hasTindakanId = column_exists_local($conn, 'invoice_items', 'tindakan_id');
+    $hasKeterangan = column_exists_local($conn, 'invoice_items', 'keterangan');
 
-    if ($hasTindakanId) {
+    if ($hasTindakanId && $hasKeterangan) {
         $ok = db_insert(
             "INSERT INTO invoice_items (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, keterangan)
              VALUES (?,?,?,?,?,?,?)",
             [$invoiceId, $tindakanId, $nama, $qty, $harga, $subtotal, $catatan]
         );
-    } else {
+    } elseif ($hasTindakanId && !$hasKeterangan) {
+        $ok = db_insert(
+            "INSERT INTO invoice_items (invoice_id, tindakan_id, nama_item, qty, harga, subtotal)
+             VALUES (?,?,?,?,?,?)",
+            [$invoiceId, $tindakanId, $nama, $qty, $harga, $subtotal]
+        );
+    } elseif (!$hasTindakanId && $hasKeterangan) {
         $ok = db_insert(
             "INSERT INTO invoice_items (invoice_id, nama_item, qty, harga, subtotal, keterangan)
              VALUES (?,?,?,?,?,?)",
             [$invoiceId, $nama, $qty, $harga, $subtotal, $catatan]
+        );
+    } else {
+        $ok = db_insert(
+            "INSERT INTO invoice_items (invoice_id, nama_item, qty, harga, subtotal)
+             VALUES (?,?,?,?,?)",
+            [$invoiceId, $nama, $qty, $harga, $subtotal]
         );
     }
 
@@ -122,30 +136,33 @@ function sync_invoice_total($invoiceId) {
     db_run("UPDATE invoice SET subtotal=?, total=? WHERE id=?", [$subtotal, $total, $invoiceId]);
 }
 
-$patientId   = (int)(postv('patient_id', 0));
-$visitId     = (int)(postv('visit_id', 0));
-$toothNumber = trim((string)postv('tooth_number', ''));
-$surfaceCode = strtoupper(trim((string)postv('surface_code', '')));
-$tindakanId  = (int)(postv('tindakan_id', 0));
+$pasienId     = (int)postv('pasien_id', 0);
+$kunjunganId  = (int)postv('kunjungan_id', 0);
+$nomorGigi    = trim((string)postv('nomor_gigi', ''));
+$surfaceCode  = strtoupper(trim((string)postv('surface_code', '')));
+$conditionCode = trim((string)postv('condition_code', ''));
+$statusType   = trim((string)postv('status_type', 'completed'));
+
+$tindakanId   = (int)postv('tindakan_id', 0);
 $namaTindakan = trim((string)postv('nama_tindakan', ''));
-$harga       = to_float(postv('harga', 0));
-$qty         = to_float(postv('qty', 1));
-$subtotal    = to_float(postv('subtotal', 0));
-$satuanHarga = trim((string)postv('satuan_harga', 'per tindakan'));
-$catatan     = trim((string)postv('catatan', ''));
+$harga        = to_float(postv('harga', 0));
+$qty          = to_float(postv('qty', 1));
+$subtotal     = to_float(postv('subtotal', 0));
+$satuanHarga  = trim((string)postv('satuan_harga', 'per tindakan'));
+$catatan      = trim((string)postv('catatan', ''));
 $sendToBilling = (string)postv('send_to_billing', '1') === '1';
 
-if ($patientId <= 0) {
+if ($pasienId <= 0) {
     http_response_code(422);
     exit('Pasien tidak valid.');
 }
 
-if ($visitId <= 0) {
+if ($kunjunganId <= 0) {
     http_response_code(422);
     exit('Kunjungan tidak valid.');
 }
 
-if ($toothNumber === '') {
+if ($nomorGigi === '') {
     http_response_code(422);
     exit('Nomor gigi wajib diisi.');
 }
@@ -176,11 +193,12 @@ try {
 
     $ok = db_insert(
         "INSERT INTO odontogram_tindakan
-        (kunjungan_id, nomor_gigi, surface_code, tindakan_id, nama_tindakan, harga, qty, subtotal, satuan_harga, catatan)
-        VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (pasien_id, kunjungan_id, nomor_gigi, surface_code, tindakan_id, nama_tindakan, harga, qty, subtotal, satuan_harga, catatan)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         [
-            $visitId,
-            $toothNumber,
+            $pasienId,
+            $kunjunganId,
+            $nomorGigi,
             $surfaceCode,
             $tindakanId,
             $namaTindakan,
@@ -197,7 +215,7 @@ try {
     }
 
     if ($sendToBilling) {
-        $invoiceId = ensure_invoice_exists_for_visit($patientId, $visitId);
+        $invoiceId = ensure_invoice_exists_for_visit($pasienId, $kunjunganId);
 
         insert_invoice_item_safe(
             $conn,
@@ -207,7 +225,7 @@ try {
             $qty,
             $harga,
             $subtotal,
-            'Odontogram ' . $toothNumber . ' / ' . $surfaceCode
+            'Odontogram ' . $nomorGigi . ' / ' . $surfaceCode
         );
 
         sync_invoice_total($invoiceId);
