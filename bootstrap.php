@@ -230,23 +230,47 @@ function icd10_options($keyword = '') {
 
 function sync_invoice_finance($invoiceId) {
     $conn = db();
-    if (!table_exists($conn, 'invoice') || !table_exists($conn, 'keuangan')) return;
+    if (!$conn) return;
 
-    $inv = db_fetch_one("SELECT * FROM invoice WHERE id = ?", array((int)$invoiceId));
+    if (!table_exists($conn, 'invoice')) return;
+
+    if (!table_exists($conn, 'keuangan')) {
+        $conn->query("
+            CREATE TABLE IF NOT EXISTS keuangan (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                tanggal DATETIME NOT NULL,
+                jenis VARCHAR(30) NOT NULL,
+                deskripsi TEXT DEFAULT NULL,
+                nominal DECIMAL(15,2) NOT NULL DEFAULT 0,
+                invoice_id INT DEFAULT NULL,
+                pasien_id INT DEFAULT NULL,
+                INDEX idx_tanggal (tanggal),
+                INDEX idx_jenis (jenis),
+                INDEX idx_invoice_id (invoice_id),
+                INDEX idx_pasien_id (pasien_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+    }
+
+    $inv = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [(int)$invoiceId]);
     if (!$inv) return;
 
-    db_run("DELETE FROM keuangan WHERE invoice_id = ?", array((int)$invoiceId));
+    db_run("DELETE FROM keuangan WHERE invoice_id = ?", [(int)$invoiceId]);
 
-    $status = strtolower((string)($inv['status_bayar'] ?? ''));
-    if ($status === 'lunas' || $status === 'paid') {
-        db_insert(
-            "INSERT INTO keuangan (tanggal, jenis, deskripsi, nominal, invoice_id, pasien_id) VALUES (NOW(), 'pemasukan', ?, ?, ?, ?)",
-            array(
-                'Pembayaran invoice ' . ($inv['no_invoice'] ?? ''),
-                (float)($inv['total'] ?? 0),
-                (int)$invoiceId,
-                (int)($inv['pasien_id'] ?? 0)
-            )
-        );
+    $status = strtolower(trim((string)($inv['status_bayar'] ?? 'pending')));
+    if ($status !== 'lunas' && $status !== 'paid') return;
+
+    db_insert(
+        "INSERT INTO keuangan (tanggal, jenis, deskripsi, nominal, invoice_id, pasien_id)
+         VALUES (?, 'pemasukan', ?, ?, ?, ?)",
+        [
+            !empty($inv['tanggal']) ? $inv['tanggal'] : date('Y-m-d H:i:s'),
+            'Pembayaran invoice ' . ($inv['no_invoice'] ?? ''),
+            (float)($inv['total'] ?? 0),
+            (int)$invoiceId,
+            (int)($inv['pasien_id'] ?? 0)
+        ]
+    );
+
     }
 }
