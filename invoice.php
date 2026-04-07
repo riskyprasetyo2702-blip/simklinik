@@ -2,72 +2,12 @@
 require_once __DIR__ . '/bootstrap.php';
 ensure_logged_in();
 
-$pasienId   = (int)($_GET['pasien_id'] ?? 0);
+$pasienId    = (int)($_GET['pasien_id'] ?? 0);
 $kunjunganId = (int)($_GET['kunjungan_id'] ?? 0);
-$editId     = (int)($_GET['edit'] ?? 0);
-$syncOdo    = (int)($_GET['sync_odo'] ?? 0);
+$editId      = (int)($_GET['edit'] ?? 0);
 
 $pasien    = $pasienId ? db_fetch_one("SELECT * FROM pasien WHERE id=?", [$pasienId]) : null;
 $kunjungan = $kunjunganId ? db_fetch_one("SELECT * FROM kunjungan WHERE id=?", [$kunjunganId]) : null;
-
-/**
- * Auto draft dari odontogram
- * Akan membuat invoice draft bila ada data odontogram_tindakan dan belum ada invoice untuk kunjungan tsb
- */
-if ($syncOdo && $kunjunganId > 0 && $pasienId > 0) {
-    $itemsOdo = db_fetch_all(
-        "SELECT * FROM odontogram_tindakan WHERE kunjungan_id=? ORDER BY id ASC",
-        [$kunjunganId]
-    );
-
-    if ($itemsOdo) {
-        $existing = db_fetch_one(
-            "SELECT id FROM invoice WHERE kunjungan_id=? ORDER BY id DESC LIMIT 1",
-            [$kunjunganId]
-        );
-
-        if (!$existing) {
-            $invoiceId = db_insert(
-                "INSERT INTO invoice
-                (pasien_id, kunjungan_id, no_invoice, tanggal, subtotal, diskon, total, status_bayar, metode_bayar, catatan)
-                VALUES (?,?,?,?,0,0,0,'pending','qris','Auto draft dari odontogram')",
-                [$pasienId, $kunjunganId, next_invoice_no(), date('Y-m-d H:i:s')]
-            );
-
-            foreach ($itemsOdo as $it) {
-                db_insert(
-                    "INSERT INTO invoice_items
-                    (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, nomor_gigi, keterangan)
-                    VALUES (?,?,?,?,?,?,?,?)",
-                    [
-                        $invoiceId,
-                        (int)($it['tindakan_id'] ?? 0),
-                        (string)($it['nama_tindakan'] ?? 'Tindakan Odontogram'),
-                        (float)($it['qty'] ?? 1),
-                        (float)($it['harga'] ?? 0),
-                        (float)($it['subtotal'] ?? 0),
-                        (string)($it['nomor_gigi'] ?? ''),
-                        (string)($it['catatan'] ?? '')
-                    ]
-                );
-            }
-
-            $sum = db_fetch_one(
-                "SELECT COALESCE(SUM(subtotal),0) subtotal FROM invoice_items WHERE invoice_id=?",
-                [$invoiceId]
-            );
-
-            db_run(
-                "UPDATE invoice SET subtotal=?, total=? WHERE id=?",
-                [(float)$sum['subtotal'], (float)$sum['subtotal'], $invoiceId]
-            );
-
-            $_SESSION['success'] = 'Draft invoice otomatis dibuat dari odontogram.';
-            header('Location: invoice.php?edit=' . $invoiceId);
-            exit;
-        }
-    }
-}
 
 $editData  = null;
 $editItems = [];
@@ -82,10 +22,7 @@ if ($editId > 0) {
         $pasien    = $pasienId ? db_fetch_one("SELECT * FROM pasien WHERE id=?", [$pasienId]) : null;
         $kunjungan = $kunjunganId ? db_fetch_one("SELECT * FROM kunjungan WHERE id=?", [$kunjunganId]) : null;
 
-        $editItems = db_fetch_all(
-            "SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id ASC",
-            [$editId]
-        );
+        $editItems = db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id=? ORDER BY id ASC", [$editId]);
     }
 }
 
@@ -251,6 +188,26 @@ $tindakanList = tindakan_options();
             border-radius: 18px;
             padding: 16px;
         }
+        .odonto-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            max-width: 920px;
+        }
+        .tooth-btn {
+            width: 48px;
+            height: 48px;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #fff;
+            cursor: pointer;
+            font-weight: 700;
+            transition: .15s ease;
+        }
+        .tooth-btn:hover {
+            background: #dbeafe;
+            border-color: #93c5fd;
+        }
         @media (max-width: 980px) {
             .grid, .item-row {
                 grid-template-columns: 1fr;
@@ -307,7 +264,7 @@ $tindakanList = tindakan_options();
             if (totalField) totalField.value = total.toFixed(2);
         }
 
-        function tambahItem(nama = '', qty = '1', harga = '0', subtotal = '0', ket = '', gigi = '', tid = '') {
+        function tambahItem(nama = '', qty = '1', harga = '0', subtotal = '0', ket = '', gigi = '', tid = '0') {
             const wrap = document.getElementById('items-wrap');
             const div = document.createElement('div');
             div.className = 'item-row';
@@ -350,6 +307,48 @@ $tindakanList = tindakan_options();
             if (namaInput) namaInput.value = tindakanNama[id] || '';
             if (hargaInput) hargaInput.value = tindakanHarga[id] || 0;
 
+            hitungTotal();
+        }
+
+        function pilihGigi(no) {
+            let tindakan = prompt("Masukkan tindakan untuk gigi " + no + "\\nContoh: Tambal, Cabut, Scaling");
+            if (!tindakan || tindakan.trim() === '') return;
+
+            tambahItemOdontogram(no, tindakan.trim());
+        }
+
+        function tambahItemOdontogram(no, tindakan) {
+            const wrap = document.getElementById('items-wrap');
+            if (!wrap) {
+                alert('Bagian item invoice tidak ditemukan.');
+                return;
+            }
+
+            const div = document.createElement('div');
+            div.className = 'item-row';
+
+            div.innerHTML = `
+                <select class="tindakan_select" onchange="pilihTindakan(this)">
+                    <option value="">Katalog tindakan</option>
+                    <?php foreach ($tindakanList as $t): ?>
+                        <option value="<?= (int)$t['id'] ?>">
+                            <?= e($t['nama_tindakan']) ?> • <?= e(rupiah($t['harga'])) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+
+                <input type="text" name="nama_item[]" value="${tindakan}" placeholder="Nama tindakan / item">
+                <input type="number" step="0.01" class="qty" name="qty[]" value="1" oninput="hitungTotal()">
+                <input type="number" step="0.01" class="harga" name="harga[]" value="0" oninput="hitungTotal()">
+                <input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="0" readonly>
+                <button type="button" onclick="this.parentElement.remove();hitungTotal()" style="background:#dc2626">Hapus</button>
+
+                <input type="hidden" name="tindakan_id[]" value="0">
+                <input type="text" name="nomor_gigi[]" value="${no}" placeholder="Nomor gigi" style="grid-column:1/2">
+                <input type="text" name="keterangan_item[]" value="Odontogram gigi ${no}" placeholder="Keterangan item" style="grid-column:2/-1">
+            `;
+
+            wrap.appendChild(div);
             hitungTotal();
         }
 
@@ -464,45 +463,74 @@ $tindakanList = tindakan_options();
                     <h3 style="margin:0">Item Invoice</h3>
                     <div class="toolbar">
                         <button type="button" onclick="tambahItem()" style="width:auto;padding:13px 18px">Tambah Item</button>
-
-                        <?php if ($pasienId > 0 && $kunjunganId > 0): ?>
-                            <a
-                                class="btn blue"
-                                href="invoice.php?pasien_id=<?= (int)$pasienId ?>&kunjungan_id=<?= (int)$kunjunganId ?>&sync_odo=1"
-                                style="padding:13px 18px"
-                            >
-                                Sync Odontogram
-                            </a>
-                        <?php endif; ?>
                     </div>
                 </div>
 
                 <div id="items-wrap" style="margin-top:12px">
                     <?php foreach ($editItems as $it): ?>
+                        <?php
+                        $itemNama = $it['nama_item'] ?? $it['item'] ?? $it['deskripsi'] ?? $it['nama_tindakan'] ?? $it['tindakan'] ?? '';
+                        $itemHarga = $it['harga'] ?? $it['price'] ?? 0;
+                        $itemSubtotal = $it['subtotal'] ?? $it['total'] ?? 0;
+                        $itemNomorGigi = $it['nomor_gigi'] ?? $it['tooth_number'] ?? '';
+                        $itemKet = $it['keterangan'] ?? $it['notes'] ?? '';
+                        $itemTindakanId = $it['tindakan_id'] ?? $it['treatment_id'] ?? $it['service_id'] ?? $it['procedure_id'] ?? $it['item_id'] ?? 0;
+                        ?>
                         <div class="item-row">
                             <select class="tindakan_select" onchange="pilihTindakan(this)">
                                 <option value="">Katalog tindakan</option>
                                 <?php foreach ($tindakanList as $t): ?>
                                     <option
                                         value="<?= (int)$t['id'] ?>"
-                                        <?= ((int)($it['tindakan_id'] ?? 0) === (int)$t['id']) ? 'selected' : '' ?>
+                                        <?= ((int)$itemTindakanId === (int)$t['id']) ? 'selected' : '' ?>
                                     >
                                         <?= e($t['nama_tindakan']) ?> • <?= e(rupiah($t['harga'])) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
 
-                            <input type="text" name="nama_item[]" value="<?= e($it['nama_item']) ?>">
-                            <input type="number" step="0.01" class="qty" name="qty[]" value="<?= e($it['qty']) ?>" oninput="hitungTotal()">
-                            <input type="number" step="0.01" class="harga" name="harga[]" value="<?= e($it['harga']) ?>" oninput="hitungTotal()">
-                            <input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="<?= e($it['subtotal']) ?>" readonly>
+                            <input type="text" name="nama_item[]" value="<?= e($itemNama) ?>">
+                            <input type="number" step="0.01" class="qty" name="qty[]" value="<?= e($it['qty'] ?? 1) ?>" oninput="hitungTotal()">
+                            <input type="number" step="0.01" class="harga" name="harga[]" value="<?= e($itemHarga) ?>" oninput="hitungTotal()">
+                            <input type="number" step="0.01" class="subtotal" name="subtotal_item[]" value="<?= e($itemSubtotal) ?>" readonly>
                             <button type="button" onclick="this.parentElement.remove();hitungTotal()" style="background:#dc2626">Hapus</button>
 
-                            <input type="hidden" name="tindakan_id[]" value="<?= (int)($it['tindakan_id'] ?? 0) ?>">
-                            <input type="text" name="nomor_gigi[]" placeholder="Nomor gigi" value="<?= e($it['nomor_gigi'] ?? '') ?>" style="grid-column:1/2">
-                            <input type="text" name="keterangan_item[]" value="<?= e($it['keterangan'] ?? '') ?>" style="grid-column:2/-1">
+                            <input type="hidden" name="tindakan_id[]" value="<?= (int)$itemTindakanId ?>">
+                            <input type="text" name="nomor_gigi[]" placeholder="Nomor gigi" value="<?= e($itemNomorGigi) ?>" style="grid-column:1/2">
+                            <input type="text" name="keterangan_item[]" value="<?= e($itemKet) ?>" style="grid-column:2/-1">
                         </div>
                     <?php endforeach; ?>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top:16px;background:#f8fbff">
+                <div class="row">
+                    <h3 style="margin:0">Odontogram Sederhana</h3>
+                    <div class="small">Klik nomor gigi untuk menambahkan tindakan ke invoice</div>
+                </div>
+
+                <div style="margin-top:16px">
+                    <div style="font-weight:700;margin-bottom:8px">Rahang Atas</div>
+                    <div class="odonto-grid">
+                        <?php
+                        $gigiAtas = [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28];
+                        foreach ($gigiAtas as $g):
+                        ?>
+                            <button type="button" class="tooth-btn" onclick="pilihGigi(<?= $g ?>)"><?= $g ?></button>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+
+                <div style="margin-top:18px">
+                    <div style="font-weight:700;margin-bottom:8px">Rahang Bawah</div>
+                    <div class="odonto-grid">
+                        <?php
+                        $gigiBawah = [48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
+                        foreach ($gigiBawah as $g):
+                        ?>
+                            <button type="button" class="tooth-btn" onclick="pilihGigi(<?= $g ?>)"><?= $g ?></button>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
             </div>
 
@@ -584,7 +612,7 @@ $tindakanList = tindakan_options();
                 <tbody>
                     <?php foreach ($invoiceList as $inv): ?>
                         <?php
-                        $st = strtolower((string)$inv['status_bayar']);
+                        $st = strtolower((string)($inv['status_bayar'] ?? ''));
                         $cls = $st === 'lunas' ? 'lunas' : ($st === 'pending' ? 'pending' : 'belum');
                         ?>
                         <tr>
