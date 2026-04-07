@@ -440,9 +440,9 @@ document.getElementById('saveSurfaceBtn').addEventListener('click', function () 
     }
 
     const formData = new URLSearchParams();
-    formData.append('patient_id', patientId);
-    formData.append('visit_id', visitId);
-    formData.append('tooth_number', tooth);
+    formData.append('pasien_id', patientId);
+    formData.append('kunjungan_id', visitId);
+    formData.append('nomor_gigi', tooth);
     formData.append('surface_code', surface);
     formData.append('condition_code', conditionCode);
     formData.append('status_type', 'completed');
@@ -454,6 +454,7 @@ document.getElementById('saveSurfaceBtn').addEventListener('click', function () 
     formData.append('subtotal', harga * qty);
     formData.append('satuan_harga', satuan);
     formData.append('catatan', catatan);
+   
 
     fetch('save_surface.php', {
         method: 'POST',
