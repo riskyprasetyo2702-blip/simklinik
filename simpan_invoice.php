@@ -63,6 +63,10 @@ if (!in_array($metodeBayar, ['qris', 'tunai', 'transfer', 'debit', 'kartu kredit
     $metodeBayar = 'qris';
 }
 
+$hasTindakanId = column_exists($conn, 'invoice_items', 'tindakan_id');
+$hasNomorGigi  = column_exists($conn, 'invoice_items', 'nomor_gigi');
+$hasKeterangan = column_exists($conn, 'invoice_items', 'keterangan');
+
 $conn->begin_transaction();
 
 try {
@@ -96,7 +100,6 @@ try {
         }
 
         $invoiceId = $id;
-
         db_run("DELETE FROM invoice_items WHERE invoice_id = ?", [$invoiceId]);
     } else {
         $invoiceId = db_insert(
@@ -139,21 +142,123 @@ try {
         if ($harga < 0) $harga = 0;
         if ($subtotal <= 0) $subtotal = $qty * $harga;
 
-        $itemId = db_insert(
-            "INSERT INTO invoice_items
-             (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, nomor_gigi, keterangan)
-             VALUES (?,?,?,?,?,?,?,?)",
-            [
-                $invoiceId,
-                $tindakan > 0 ? $tindakan : null,
-                $nama,
-                $qty,
-                $harga,
-                $subtotal,
-                $nomorGigi,
-                $ket
-            ]
-        );
+        if ($hasTindakanId && $hasNomorGigi && $hasKeterangan) {
+            $itemId = db_insert(
+                "INSERT INTO invoice_items
+                 (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, nomor_gigi, keterangan)
+                 VALUES (?,?,?,?,?,?,?,?)",
+                [
+                    $invoiceId,
+                    $tindakan > 0 ? $tindakan : null,
+                    $nama,
+                    $qty,
+                    $harga,
+                    $subtotal,
+                    $nomorGigi,
+                    $ket
+                ]
+            );
+        } elseif ($hasTindakanId && $hasNomorGigi && !$hasKeterangan) {
+            $itemId = db_insert(
+                "INSERT INTO invoice_items
+                 (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, nomor_gigi)
+                 VALUES (?,?,?,?,?,?,?)",
+                [
+                    $invoiceId,
+                    $tindakan > 0 ? $tindakan : null,
+                    $nama,
+                    $qty,
+                    $harga,
+                    $subtotal,
+                    $nomorGigi
+                ]
+            );
+        } elseif ($hasTindakanId && !$hasNomorGigi && $hasKeterangan) {
+            $itemId = db_insert(
+                "INSERT INTO invoice_items
+                 (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, keterangan)
+                 VALUES (?,?,?,?,?,?,?)",
+                [
+                    $invoiceId,
+                    $tindakan > 0 ? $tindakan : null,
+                    $nama,
+                    $qty,
+                    $harga,
+                    $subtotal,
+                    $ket
+                ]
+            );
+        } elseif (!$hasTindakanId && $hasNomorGigi && $hasKeterangan) {
+            $itemId = db_insert(
+                "INSERT INTO invoice_items
+                 (invoice_id, nama_item, qty, harga, subtotal, nomor_gigi, keterangan)
+                 VALUES (?,?,?,?,?,?,?)",
+                [
+                    $invoiceId,
+                    $nama,
+                    $qty,
+                    $harga,
+                    $subtotal,
+                    $nomorGigi,
+                    $ket
+                ]
+            );
+        } elseif ($hasTindakanId && !$hasNomorGigi && !$hasKeterangan) {
+            $itemId = db_insert(
+                "INSERT INTO invoice_items
+                 (invoice_id, tindakan_id, nama_item, qty, harga, subtotal)
+                 VALUES (?,?,?,?,?,?)",
+                [
+                    $invoiceId,
+                    $tindakan > 0 ? $tindakan : null,
+                    $nama,
+                    $qty,
+                    $harga,
+                    $subtotal
+                ]
+            );
+        } elseif (!$hasTindakanId && $hasNomorGigi && !$hasKeterangan) {
+            $itemId = db_insert(
+                "INSERT INTO invoice_items
+                 (invoice_id, nama_item, qty, harga, subtotal, nomor_gigi)
+                 VALUES (?,?,?,?,?,?)",
+                [
+                    $invoiceId,
+                    $nama,
+                    $qty,
+                    $harga,
+                    $subtotal,
+                    $nomorGigi
+                ]
+            );
+        } elseif (!$hasTindakanId && !$hasNomorGigi && $hasKeterangan) {
+            $itemId = db_insert(
+                "INSERT INTO invoice_items
+                 (invoice_id, nama_item, qty, harga, subtotal, keterangan)
+                 VALUES (?,?,?,?,?,?)",
+                [
+                    $invoiceId,
+                    $nama,
+                    $qty,
+                    $harga,
+                    $subtotal,
+                    $ket
+                ]
+            );
+        } else {
+            $itemId = db_insert(
+                "INSERT INTO invoice_items
+                 (invoice_id, nama_item, qty, harga, subtotal)
+                 VALUES (?,?,?,?,?)",
+                [
+                    $invoiceId,
+                    $nama,
+                    $qty,
+                    $harga,
+                    $subtotal
+                ]
+            );
+        }
 
         if (!$itemId) {
             throw new Exception('Gagal menyimpan item invoice: ' . $nama);
