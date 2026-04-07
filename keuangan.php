@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 ensure_logged_in();
-ensure_keuangan_table();
+ensure_keuangan_schema();
 
 $bulan = $_GET['bulan'] ?? date('Y-m');
 
@@ -11,11 +11,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['aksi'] ?? '') === 'tambah_
     $deskripsi = trim($_POST['deskripsi'] ?? '');
     $nominal   = (float)($_POST['nominal'] ?? 0);
 
-    if ($nominal > 0) {
+    if ($tanggal !== '') {
+        $tanggal = str_replace('T', ' ', $tanggal);
+        if (strlen($tanggal) === 16) $tanggal .= ':00';
+    } else {
+        $tanggal = date('Y-m-d H:i:s');
+    }
+
+    if ($nominal <= 0) {
+        $_SESSION['error'] = 'Nominal pengeluaran harus lebih dari 0.';
+    } else {
         tambah_pengeluaran($tanggal, $kategori, $deskripsi, $nominal);
         $_SESSION['success'] = 'Pengeluaran berhasil ditambahkan.';
-    } else {
-        $_SESSION['error'] = 'Nominal pengeluaran harus lebih dari 0.';
     }
 
     header('Location: keuangan.php?bulan=' . urlencode($bulan));
@@ -24,7 +31,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['aksi'] ?? '') === 'tambah_
 
 $mulai = $bulan . '-01 00:00:00';
 $akhir = date('Y-m-t 23:59:59', strtotime($mulai));
-
 $ringkas = keuangan_ringkasan($bulan);
 
 $rows = db_fetch_all("
@@ -33,7 +39,7 @@ $rows = db_fetch_all("
     LEFT JOIN pasien p ON p.id = k.pasien_id
     WHERE k.tanggal BETWEEN ? AND ?
     ORDER BY k.tanggal DESC, k.id DESC
-", [$mulai, $akhir]);
+", array($mulai, $akhir));
 ?>
 <!doctype html>
 <html lang="id">
@@ -41,103 +47,121 @@ $rows = db_fetch_all("
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Manajemen Keuangan</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body{background:#eef4f8}
-        .cardx{background:#fff;border:1px solid #dde7ef;border-radius:22px;padding:22px;box-shadow:0 10px 24px rgba(0,0,0,.05)}
-        .stat{border-radius:20px;padding:20px;color:#fff}
-        .stat h6{margin:0 0 8px;font-size:14px}
-        .stat h3{margin:0;font-weight:800}
+        *{box-sizing:border-box;font-family:Inter,Arial,sans-serif}
+        body{margin:0;background:#f4f8fb;color:#0f172a}
+        .wrap{max-width:1400px;margin:0 auto;padding:24px}
+        .card{background:#fff;border:1px solid #e2e8f0;border-radius:24px;padding:22px;box-shadow:0 14px 30px rgba(15,23,42,.06);margin-bottom:18px}
+        .head,.row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+        .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+        .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+        input,select,textarea,button{width:100%;padding:13px 14px;border:1px solid #cbd5e1;border-radius:14px}
+        .btn,button{background:#0f172a;color:#fff;text-decoration:none;display:inline-block;text-align:center;border:none;font-weight:700;cursor:pointer}
+        .btn.secondary{background:#475569}
+        .stat{padding:20px;border-radius:20px;color:#fff}
+        .stat h4{margin:0 0 8px}
+        .stat h2{margin:0}
+        .success{background:linear-gradient(135deg,#16a34a,#22c55e)}
+        .danger{background:linear-gradient(135deg,#dc2626,#ef4444)}
+        .primary{background:linear-gradient(135deg,#2563eb,#3b82f6)}
+        .table-wrap{overflow:auto}
+        table{width:100%;border-collapse:collapse}
+        th,td{padding:12px;border-bottom:1px solid #e2e8f0;vertical-align:top}
+        .badge{display:inline-block;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:700}
+        .in{background:#dcfce7;color:#166534}
+        .out{background:#fee2e2;color:#991b1b}
+        .small{color:#64748b;font-size:13px}
+        @media(max-width:980px){.grid,.grid2{grid-template-columns:1fr}}
     </style>
 </head>
 <body>
-<div class="container py-4">
+<div class="wrap">
+
+    <div class="head">
+        <div>
+            <h1 style="margin:0 0 8px">Manajemen Keuangan</h1>
+            <div class="small">Pemasukan otomatis dari invoice lunas dan pengeluaran manual klinik</div>
+        </div>
+        <div class="row">
+            <a class="btn secondary" href="dashboard.php">Dashboard</a>
+            <a class="btn" href="invoice.php">Billing</a>
+            <a class="btn secondary" href="laporan_keuangan.php">Laporan</a>
+        </div>
+    </div>
 
     <?php flash_message(); ?>
 
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <div>
-            <h2 class="mb-1">Manajemen Keuangan Klinik</h2>
-            <div class="text-muted">Pemasukan otomatis dari invoice lunas + pengeluaran manual</div>
-        </div>
-        <div>
-            <a href="dashboard.php" class="btn btn-secondary">Dashboard</a>
-            <a href="laporan_keuangan.php" class="btn btn-dark">Laporan</a>
-        </div>
-    </div>
-
-    <form method="get" class="mb-4">
-        <div class="row g-2">
-            <div class="col-md-3">
-                <input type="month" name="bulan" value="<?= e($bulan) ?>" class="form-control">
+    <div class="card">
+        <form method="get" class="row" style="align-items:end">
+            <div style="min-width:220px">
+                <label>Bulan</label>
+                <input type="month" name="bulan" value="<?= e($bulan) ?>">
             </div>
-            <div class="col-md-2">
-                <button class="btn btn-primary w-100">Filter</button>
-            </div>
-        </div>
-    </form>
-
-    <div class="row g-3 mb-4">
-        <div class="col-md-4">
-            <div class="stat bg-success">
-                <h6>Total Pemasukan</h6>
-                <h3><?= rupiah($ringkas['pemasukan']) ?></h3>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="stat bg-danger">
-                <h6>Total Pengeluaran</h6>
-                <h3><?= rupiah($ringkas['pengeluaran']) ?></h3>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="stat bg-primary">
-                <h6>Saldo Bersih</h6>
-                <h3><?= rupiah($ringkas['saldo']) ?></h3>
-            </div>
-        </div>
-    </div>
-
-    <div class="cardx mb-4">
-        <h4 class="mb-3">Tambah Pengeluaran</h4>
-        <form method="post">
-            <input type="hidden" name="aksi" value="tambah_pengeluaran">
-            <div class="row g-3">
-                <div class="col-md-3">
-                    <label class="form-label">Tanggal</label>
-                    <input type="datetime-local" name="tanggal" class="form-control" value="<?= date('Y-m-d\TH:i') ?>">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">Kategori</label>
-                    <select name="kategori" class="form-select">
-                        <option>Operasional</option>
-                        <option>Bahan</option>
-                        <option>Gaji</option>
-                        <option>Sewa</option>
-                        <option>Listrik / Air / Internet</option>
-                        <option>Maintenance</option>
-                        <option>Lain-lain</option>
-                    </select>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label">Deskripsi</label>
-                    <input type="text" name="deskripsi" class="form-control" placeholder="Contoh: beli bahan tambal">
-                </div>
-                <div class="col-md-2">
-                    <label class="form-label">Nominal</label>
-                    <input type="number" step="0.01" name="nominal" class="form-control" required>
-                </div>
-            </div>
-            <div class="mt-3">
-                <button class="btn btn-danger">Simpan Pengeluaran</button>
+            <div>
+                <button type="submit" style="width:auto;padding:13px 18px">Filter</button>
             </div>
         </form>
     </div>
 
-    <div class="cardx">
-        <h4 class="mb-3">Jurnal Keuangan</h4>
-        <div class="table-responsive">
-            <table class="table align-middle">
+    <div class="grid">
+        <div class="stat success">
+            <h4>Total Pemasukan</h4>
+            <h2><?= e(rupiah($ringkas['pemasukan'])) ?></h2>
+        </div>
+        <div class="stat danger">
+            <h4>Total Pengeluaran</h4>
+            <h2><?= e(rupiah($ringkas['pengeluaran'])) ?></h2>
+        </div>
+        <div class="stat primary">
+            <h4>Saldo Bersih</h4>
+            <h2><?= e(rupiah($ringkas['saldo'])) ?></h2>
+        </div>
+        <div class="stat" style="background:linear-gradient(135deg,#0f172a,#334155)">
+            <h4>Periode</h4>
+            <h2><?= e($bulan) ?></h2>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2 style="margin-top:0">Tambah Pengeluaran</h2>
+        <form method="post">
+            <input type="hidden" name="aksi" value="tambah_pengeluaran">
+            <div class="grid2">
+                <div>
+                    <label>Tanggal</label>
+                    <input type="datetime-local" name="tanggal" value="<?= date('Y-m-d\TH:i') ?>">
+                </div>
+                <div>
+                    <label>Kategori</label>
+                    <select name="kategori">
+                        <option value="Operasional">Operasional</option>
+                        <option value="Bahan">Bahan</option>
+                        <option value="Gaji">Gaji</option>
+                        <option value="Sewa">Sewa</option>
+                        <option value="Listrik / Air / Internet">Listrik / Air / Internet</option>
+                        <option value="Maintenance">Maintenance</option>
+                        <option value="Lain-lain">Lain-lain</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Deskripsi</label>
+                    <input type="text" name="deskripsi" placeholder="Contoh: beli bahan tambal atau bayar listrik">
+                </div>
+                <div>
+                    <label>Nominal</label>
+                    <input type="number" step="0.01" name="nominal" min="0">
+                </div>
+            </div>
+            <div style="margin-top:16px">
+                <button type="submit" style="width:auto;padding:13px 18px;background:#dc2626">Simpan Pengeluaran</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2 style="margin-top:0">Jurnal Keuangan</h2>
+        <div class="table-wrap">
+            <table>
                 <thead>
                     <tr>
                         <th>Tanggal</th>
@@ -147,7 +171,8 @@ $rows = db_fetch_all("
                         <th>Pasien</th>
                         <th>Referensi</th>
                         <th>Metode</th>
-                        <th class="text-end">Nominal</th>
+                        <th>Status</th>
+                        <th>Nominal</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -156,10 +181,10 @@ $rows = db_fetch_all("
                             <tr>
                                 <td><?= e($r['tanggal']) ?></td>
                                 <td>
-                                    <?php if ($r['jenis'] === 'pemasukan'): ?>
-                                        <span class="badge bg-success">Pemasukan</span>
+                                    <?php if (($r['jenis'] ?? '') === 'pemasukan'): ?>
+                                        <span class="badge in">Pemasukan</span>
                                     <?php else: ?>
-                                        <span class="badge bg-danger">Pengeluaran</span>
+                                        <span class="badge out">Pengeluaran</span>
                                     <?php endif; ?>
                                 </td>
                                 <td><?= e($r['kategori'] ?? '-') ?></td>
@@ -173,11 +198,12 @@ $rows = db_fetch_all("
                                 </td>
                                 <td><?= e($r['referensi_no'] ?? '-') ?></td>
                                 <td><?= e(strtoupper($r['metode_bayar'] ?? '-')) ?></td>
-                                <td class="text-end fw-bold"><?= rupiah($r['nominal']) ?></td>
+                                <td><?= e($r['status'] ?? '-') ?></td>
+                                <td><strong><?= e(rupiah($r['nominal'])) ?></strong></td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
-                        <tr><td colspan="8" class="text-center text-muted">Belum ada data keuangan.</td></tr>
+                        <tr><td colspan="9">Belum ada data keuangan pada periode ini.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
