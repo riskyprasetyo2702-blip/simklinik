@@ -528,9 +528,9 @@ try {
         );
     } else {
         // kalau pending / belum lunas -> hapus dulu agar tidak dobel pemasukan
-        delete_keuangan_by_invoice($conn, $invoiceId);
+       
     }
-
+    sync_invoice_finance($invoiceId);
     $conn->commit();
 
     $_SESSION['success'] = 'Invoice berhasil disimpan.';
