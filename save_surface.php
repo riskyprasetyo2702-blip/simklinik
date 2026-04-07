@@ -1,262 +1,325 @@
 <?php
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+require_once __DIR__ . '/bootstrap.php';
+ensure_logged_in();
 
-$conn = new mysqli("localhost", "root", "", "simklinik");
-if ($conn->connect_error) {
-    exit("Koneksi database gagal: " . $conn->connect_error);
+header('Content-Type: text/plain; charset=utf-8');
+
+$conn = db();
+if (!$conn) {
+    http_response_code(500);
+    exit('Koneksi database gagal.');
 }
 
-$visit_id        = (int)($_POST['visit_id'] ?? 0);
-$patient_id      = (int)($_POST['patient_id'] ?? 0);
-$tooth_number    = trim($_POST['tooth_number'] ?? '');
-$surface_code    = trim($_POST['surface_code'] ?? '');
-$condition_code  = trim($_POST['condition_code'] ?? '');
-$status_type     = trim($_POST['status_type'] ?? 'completed');
-$send_to_billing = trim($_POST['send_to_billing'] ?? '0');
-
-$tindakan_id = (int)($_POST['tindakan_id'] ?? 0);
-$harga       = (int)($_POST['harga'] ?? 0);
-$qty         = (int)($_POST['qty'] ?? 1);
-$satuan      = trim($_POST['satuan_harga'] ?? 'per tindakan');
-$catatan     = trim($_POST['catatan'] ?? '');
-
-if ($visit_id <= 0 || $tooth_number === '' || $surface_code === '' || $condition_code === '' || $tindakan_id <= 0) {
-    exit("Data tidak lengkap");
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    exit('Metode tidak valid.');
 }
 
-if ($qty <= 0) {
-    $qty = 1;
+function postv($key, $default = null) {
+    return $_POST[$key] ?? $default;
 }
 
-if ($harga < 0) {
-    $harga = 0;
+function to_float($v): float {
+    if ($v === null || $v === '') return 0;
+    $v = str_replace(['Rp', 'rp', '.', ' '], '', (string)$v);
+    $v = str_replace(',', '.', $v);
+    return (float)$v;
 }
 
-$stmt = $conn->prepare("
-    INSERT INTO odontogram_surfaces
-        (visit_id, tooth_number, surface_code, condition_code, status_type)
-    VALUES (?, ?, ?, ?, ?)
-    ON DUPLICATE KEY UPDATE
-        condition_code = VALUES(condition_code),
-        status_type = VALUES(status_type),
-        updated_at = CURRENT_TIMESTAMP
-");
-
-if (!$stmt) {
-    exit("Prepare odontogram_surfaces gagal: " . $conn->error);
+function first_existing_column_local(mysqli $conn, string $table, array $candidates): ?string {
+    foreach ($candidates as $col) {
+        if (function_exists('column_exists') && column_exists($conn, $table, $col)) {
+            return $col;
+        }
+    }
+    return null;
 }
 
-$stmt->bind_param("issss", $visit_id, $tooth_number, $surface_code, $condition_code, $status_type);
+function insert_adaptive(mysqli $conn, string $table, array $data): int {
+    $columns = [];
+    $values  = [];
 
-if (!$stmt->execute()) {
-    exit("Simpan odontogram gagal: " . $stmt->error);
-}
-$stmt->close();
+    foreach ($data as $col => $val) {
+        if (function_exists('column_exists') && column_exists($conn, $table, $col)) {
+            $columns[] = $col;
+            $values[]  = $val;
+        }
+    }
 
-$getTindakan = $conn->prepare("
-    SELECT id, kode, nama_tindakan, kategori
-    FROM tindakan
-    WHERE id = ?
-    LIMIT 1
-");
+    if (!$columns) {
+        throw new Exception("Tidak ada kolom yang cocok untuk tabel {$table}.");
+    }
 
-if (!$getTindakan) {
-    exit("Prepare tindakan gagal: " . $conn->error);
-}
+    $placeholders = implode(',', array_fill(0, count($columns), '?'));
+    $sql = "INSERT INTO {$table} (" . implode(',', $columns) . ") VALUES ({$placeholders})";
 
-$getTindakan->bind_param("i", $tindakan_id);
-$getTindakan->execute();
-$tindakanRes = $getTindakan->get_result();
-$tindakan = $tindakanRes->fetch_assoc();
-$getTindakan->close();
+    $id = db_insert($sql, $values);
+    if (!$id) {
+        throw new Exception("Gagal insert ke tabel {$table}.");
+    }
 
-if (!$tindakan) {
-    exit("Master tindakan tidak ditemukan");
+    return (int)$id;
 }
 
-$kode_tindakan = $tindakan['kode'];
-$nama_tindakan = $tindakan['nama_tindakan'];
-$kategori      = $tindakan['kategori'];
-$subtotal      = $harga * $qty;
+function upsert_surface(mysqli $conn, array $data): void {
+    if (!function_exists('table_exists') || !table_exists($conn, 'odontogram_surfaces')) {
+        return;
+    }
 
-$kode_db          = mysqli_real_escape_string($conn, $kode_tindakan);
-$nama_tindakan_db = mysqli_real_escape_string($conn, $nama_tindakan);
-$kategori_db      = mysqli_real_escape_string($conn, $kategori);
-$tooth_db         = mysqli_real_escape_string($conn, $tooth_number);
-$surface_db       = mysqli_real_escape_string($conn, $surface_code);
-$catatan_db       = mysqli_real_escape_string($conn, $catatan);
-$satuan_db        = mysqli_real_escape_string($conn, $satuan);
+    $visitCol   = first_existing_column_local($conn, 'odontogram_surfaces', ['visit_id', 'kunjungan_id']);
+    $patientCol = first_existing_column_local($conn, 'odontogram_surfaces', ['patient_id', 'pasien_id']);
+    $toothCol   = first_existing_column_local($conn, 'odontogram_surfaces', ['tooth_number', 'nomor_gigi']);
+    $surfaceCol = first_existing_column_local($conn, 'odontogram_surfaces', ['surface_code', 'surface']);
+    $condCol    = first_existing_column_local($conn, 'odontogram_surfaces', ['condition_code', 'condition']);
+    $statusCol  = first_existing_column_local($conn, 'odontogram_surfaces', ['status_type', 'status']);
 
-$cekOdo = mysqli_query($conn, "
-    SELECT id
-    FROM odontogram_tindakan
-    WHERE kunjungan_id = $visit_id
-      AND tindakan_id = $tindakan_id
-      AND nomor_gigi = '$tooth_db'
-      AND surface_code = '$surface_db'
-    LIMIT 1
-");
+    if (!$visitCol || !$toothCol || !$surfaceCol || !$condCol) {
+        return;
+    }
 
-if (!$cekOdo) {
-    exit("Cek odontogram_tindakan gagal: " . mysqli_error($conn));
-}
+    $visitId = $data[$visitCol] ?? 0;
+    $tooth   = $data[$toothCol] ?? '';
+    $surface = $data[$surfaceCol] ?? '';
 
-if (mysqli_num_rows($cekOdo) === 0) {
-    $sqlOdo = "
-        INSERT INTO odontogram_tindakan
-        (pasien_id, kunjungan_id, nomor_gigi, surface_code, tindakan_id, nama_tindakan, kategori, harga, qty, subtotal, satuan_harga, catatan)
-        VALUES
-        ($patient_id, $visit_id, '$tooth_db', '$surface_db', $tindakan_id, '$nama_tindakan_db', '$kategori_db', $harga, $qty, $subtotal, '$satuan_db', '$catatan_db')
-    ";
+    $sql = "SELECT id FROM odontogram_surfaces WHERE {$visitCol}=? AND {$toothCol}=? AND {$surfaceCol}=? LIMIT 1";
+    $existing = db_fetch_one($sql, [$visitId, $tooth, $surface]);
 
-    if (!mysqli_query($conn, $sqlOdo)) {
-        exit("Gagal simpan odontogram tindakan: " . mysqli_error($conn));
+    if ($existing) {
+        $updates = [];
+        $params = [];
+
+        if ($patientCol && array_key_exists($patientCol, $data)) {
+            $updates[] = "{$patientCol}=?";
+            $params[] = $data[$patientCol];
+        }
+        $updates[] = "{$condCol}=?";
+        $params[] = $data[$condCol];
+
+        if ($statusCol && array_key_exists($statusCol, $data)) {
+            $updates[] = "{$statusCol}=?";
+            $params[] = $data[$statusCol];
+        }
+
+        if (!$updates) return;
+
+        $params[] = (int)$existing['id'];
+        $sqlUpdate = "UPDATE odontogram_surfaces SET " . implode(', ', $updates) . " WHERE id=?";
+        db_run($sqlUpdate, $params);
+    } else {
+        insert_adaptive($conn, 'odontogram_surfaces', $data);
     }
 }
 
-if ($send_to_billing !== '1') {
-    echo "OK tersimpan tanpa billing";
-    exit;
-}
+function ensure_odontogram_tindakan_exists(mysqli $conn): void {
+    if (function_exists('table_exists') && table_exists($conn, 'odontogram_tindakan')) {
+        return;
+    }
 
-$treatment_id_billing = 0;
-
-$cekTreatment = mysqli_query($conn, "
-    SELECT id
-    FROM treatments
-    WHERE kode = '$kode_db'
-    LIMIT 1
-");
-
-if (!$cekTreatment) {
-    exit("Cek treatments gagal: " . mysqli_error($conn));
-}
-
-if (mysqli_num_rows($cekTreatment) > 0) {
-    $tr = mysqli_fetch_assoc($cekTreatment);
-    $treatment_id_billing = (int)$tr['id'];
-} else {
-    $insertTreatment = mysqli_query($conn, "
-        INSERT INTO treatments (kode, nama_tindakan, kategori, harga)
-        VALUES ('$kode_db', '$nama_tindakan_db', '$kategori_db', $harga)
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS odontogram_tindakan (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            pasien_id INT NULL,
+            kunjungan_id INT NULL,
+            nomor_gigi VARCHAR(20) NOT NULL,
+            surface_code VARCHAR(10) NULL,
+            tindakan_id INT NULL,
+            nama_tindakan VARCHAR(255) NOT NULL,
+            harga DECIMAL(15,2) NOT NULL DEFAULT 0,
+            qty DECIMAL(10,2) NOT NULL DEFAULT 1,
+            subtotal DECIMAL(15,2) NOT NULL DEFAULT 0,
+            satuan_harga VARCHAR(100) NULL,
+            catatan TEXT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+}
 
-    if (!$insertTreatment) {
-        exit("Gagal membuat treatments: " . mysqli_error($conn));
+function ensure_invoice_exists_for_visit(int $pasienId, int $kunjunganId): int {
+    $row = db_fetch_one("SELECT id FROM invoice WHERE kunjungan_id=? ORDER BY id DESC LIMIT 1", [$kunjunganId]);
+    if ($row && !empty($row['id'])) {
+        return (int)$row['id'];
     }
 
-    $treatment_id_billing = (int)mysqli_insert_id($conn);
-}
+    $invoiceId = db_insert(
+        "INSERT INTO invoice (pasien_id, kunjungan_id, no_invoice, tanggal, subtotal, diskon, total, status_bayar, metode_bayar, catatan)
+         VALUES (?,?,?,?,0,0,0,'pending','qris','Auto draft dari odontogram')",
+        [
+            $pasienId,
+            $kunjunganId,
+            next_invoice_no(),
+            date('Y-m-d H:i:s')
+        ]
+    );
 
-if ($treatment_id_billing <= 0) {
-    exit("Mapping ke treatments gagal");
-}
-
-$invoice_id = 0;
-
-$cekInvoice = mysqli_query($conn, "
-    SELECT id
-    FROM invoices
-    WHERE visit_id = $visit_id
-    LIMIT 1
-");
-
-if (!$cekInvoice) {
-    exit("Cek invoices gagal: " . mysqli_error($conn));
-}
-
-if (mysqli_num_rows($cekInvoice) > 0) {
-    $inv = mysqli_fetch_assoc($cekInvoice);
-    $invoice_id = (int)$inv['id'];
-} else {
-    $nomor_invoice = 'INV' . date('YmdHis') . rand(10, 99);
-    $tanggal_invoice = date('Y-m-d H:i:s');
-
-    $createInvoice = mysqli_query($conn, "
-        INSERT INTO invoices
-        (visit_id, nomor_invoice, subtotal, diskon, total, metode_bayar, status_bayar, tanggal_invoice)
-        VALUES
-        ($visit_id, '$nomor_invoice', 0, 0, 0, NULL, 'pending', '$tanggal_invoice')
-    ");
-
-    if (!$createInvoice) {
-        exit("Gagal membuat invoices: " . mysqli_error($conn));
+    if (!$invoiceId) {
+        throw new Exception('Gagal membuat draft invoice odontogram.');
     }
 
-    $invoice_id = (int)mysqli_insert_id($conn);
+    return (int)$invoiceId;
 }
 
-$cekItem = mysqli_query($conn, "
-    SELECT id
-    FROM invoice_items
-    WHERE invoice_id = $invoice_id
-      AND treatment_id = $treatment_id_billing
-      AND tooth_number = '$tooth_db'
-      AND surface_code = '$surface_db'
-      AND sumber = 'odontogram'
-    LIMIT 1
-");
+function insert_invoice_item_adaptive(mysqli $conn, int $invoiceId, int $tindakanId, string $nama, float $qty, float $harga, float $subtotal, string $nomorGigi, string $catatan): void {
+    if (!function_exists('table_exists') || !table_exists($conn, 'invoice_items')) {
+        return;
+    }
 
-if (!$cekItem) {
-    exit("Cek invoice_items gagal: " . mysqli_error($conn));
+    $nameCol = first_existing_column_local($conn, 'invoice_items', [
+        'nama_item', 'item', 'deskripsi', 'nama_tindakan', 'tindakan', 'treatment_name'
+    ]);
+
+    if (!$nameCol) {
+        throw new Exception('Kolom nama item invoice_items tidak ditemukan.');
+    }
+
+    $data = [
+        'invoice_id'     => $invoiceId,
+        $nameCol         => $nama,
+        'qty'            => $qty,
+        'harga'          => $harga,
+        'price'          => $harga,
+        'subtotal'       => $subtotal,
+        'total'          => $subtotal,
+        'nomor_gigi'     => $nomorGigi,
+        'tooth_number'   => $nomorGigi,
+        'keterangan'     => $catatan,
+        'notes'          => $catatan,
+        'tindakan_id'    => $tindakanId,
+        'treatment_id'   => $tindakanId,
+        'service_id'     => $tindakanId,
+        'procedure_id'   => $tindakanId,
+        'item_id'        => $tindakanId,
+    ];
+
+    insert_adaptive($conn, 'invoice_items', $data);
 }
 
-if (mysqli_num_rows($cekItem) === 0) {
-    $insertItem = mysqli_query($conn, "
-        INSERT INTO invoice_items
-        (invoice_id, treatment_id, nama_tindakan, qty, harga, subtotal, tooth_number, surface_code, sumber)
-        VALUES
-        ($invoice_id, $treatment_id_billing, '$nama_tindakan_db', $qty, $harga, $subtotal, '$tooth_db', '$surface_db', 'odontogram')
-    ");
+$patientId = (int)(postv('patient_id', postv('pasien_id', 0)));
+$visitId   = (int)(postv('visit_id', postv('kunjungan_id', 0)));
 
-    if (!$insertItem) {
-        exit("Gagal insert invoice_items: " . mysqli_error($conn));
+$toothNumber   = trim((string)postv('tooth_number', postv('nomor_gigi', '')));
+$surfaceCode   = strtoupper(trim((string)postv('surface_code', '')));
+$conditionCode = trim((string)postv('condition_code', ''));
+$statusType    = trim((string)postv('status_type', 'completed'));
+
+$tindakanId   = (int)postv('tindakan_id', postv('treatment_id', 0));
+$namaTindakan = trim((string)postv('nama_tindakan', ''));
+$harga        = to_float(postv('harga', 0));
+$qty          = to_float(postv('qty', 1));
+$subtotal     = to_float(postv('subtotal', 0));
+$satuanHarga  = trim((string)postv('satuan_harga', 'per tindakan'));
+$catatan      = trim((string)postv('catatan', ''));
+$sendToBilling = (string)postv('send_to_billing', '1') === '1';
+
+if ($patientId <= 0 || $visitId <= 0) {
+    http_response_code(422);
+    exit('Pasien dan kunjungan belum valid.');
+}
+
+if ($toothNumber === '') {
+    http_response_code(422);
+    exit('Nomor gigi wajib diisi.');
+}
+
+if ($surfaceCode === '') {
+    http_response_code(422);
+    exit('Permukaan gigi wajib dipilih.');
+}
+
+if ($conditionCode === '' || $tindakanId <= 0) {
+    http_response_code(422);
+    exit('Tindakan odontogram wajib dipilih.');
+}
+
+if ($namaTindakan === '') {
+    $master = db_fetch_one("SELECT * FROM tindakan WHERE id=? LIMIT 1", [$tindakanId]);
+    if ($master) {
+        $namaTindakan = $master['nama_tindakan'] ?? $master['nama'] ?? 'Tindakan';
+    } else {
+        $namaTindakan = 'Tindakan';
     }
 }
 
-$sumQ = mysqli_query($conn, "
-    SELECT COALESCE(SUM(subtotal), 0) AS subtotal_total
-    FROM invoice_items
-    WHERE invoice_id = $invoice_id
-");
+if ($qty <= 0) $qty = 1;
+if ($harga < 0) $harga = 0;
+if ($subtotal <= 0) $subtotal = $harga * $qty;
 
-if (!$sumQ) {
-    exit("Hitung subtotal invoice_items gagal: " . mysqli_error($conn));
+$conn->begin_transaction();
+
+try {
+    ensure_odontogram_tindakan_exists($conn);
+
+    // simpan status permukaan bila tabel tersedia
+    upsert_surface($conn, [
+        'patient_id'      => $patientId,
+        'pasien_id'       => $patientId,
+        'visit_id'        => $visitId,
+        'kunjungan_id'    => $visitId,
+        'tooth_number'    => $toothNumber,
+        'nomor_gigi'      => $toothNumber,
+        'surface_code'    => $surfaceCode,
+        'condition_code'  => $conditionCode,
+        'status_type'     => $statusType,
+        'status'          => $statusType
+    ]);
+
+    // simpan riwayat tindakan odontogram
+    insert_adaptive($conn, 'odontogram_tindakan', [
+        'patient_id'    => $patientId,
+        'pasien_id'     => $patientId,
+        'visit_id'      => $visitId,
+        'kunjungan_id'  => $visitId,
+        'tooth_number'  => $toothNumber,
+        'nomor_gigi'    => $toothNumber,
+        'surface_code'  => $surfaceCode,
+        'tindakan_id'   => $tindakanId,
+        'treatment_id'  => $tindakanId,
+        'nama_tindakan' => $namaTindakan,
+        'treatment_name'=> $namaTindakan,
+        'harga'         => $harga,
+        'qty'           => $qty,
+        'subtotal'      => $subtotal,
+        'satuan_harga'  => $satuanHarga,
+        'catatan'       => $catatan,
+        'notes'         => $catatan,
+        'condition_code'=> $conditionCode,
+        'status_type'   => $statusType,
+        'created_at'    => date('Y-m-d H:i:s')
+    ]);
+
+    // hubungkan ke billing bila diminta
+    if ($sendToBilling && function_exists('table_exists') && table_exists($conn, 'invoice')) {
+        $invoiceId = ensure_invoice_exists_for_visit($patientId, $visitId);
+
+        insert_invoice_item_adaptive(
+            $conn,
+            $invoiceId,
+            $tindakanId,
+            $namaTindakan,
+            $qty,
+            $harga,
+            $subtotal,
+            $toothNumber,
+            'Odontogram ' . $toothNumber . ' / ' . $surfaceCode . ($catatan ? ' - ' . $catatan : '')
+        );
+
+        $sum = db_fetch_one(
+            "SELECT COALESCE(SUM(subtotal),0) AS subtotal FROM invoice_items WHERE invoice_id=?",
+            [$invoiceId]
+        );
+
+        $inv = db_fetch_one("SELECT diskon FROM invoice WHERE id=? LIMIT 1", [$invoiceId]);
+        $diskon = (float)($inv['diskon'] ?? 0);
+        $invoiceSubtotal = (float)($sum['subtotal'] ?? 0);
+        $invoiceTotal = $invoiceSubtotal - $diskon;
+        if ($invoiceTotal < 0) $invoiceTotal = 0;
+
+        db_run("UPDATE invoice SET subtotal=?, total=? WHERE id=?", [$invoiceSubtotal, $invoiceTotal, $invoiceId]);
+    }
+
+    $conn->commit();
+    exit('Tindakan odontogram berhasil disimpan.');
+} catch (Throwable $e) {
+    $conn->rollback();
+    http_response_code(500);
+    exit('Gagal menyimpan odontogram: ' . $e->getMessage());
 }
-
-$sumData = mysqli_fetch_assoc($sumQ);
-$subtotal_total = (int)$sumData['subtotal_total'];
-
-$invQ = mysqli_query($conn, "
-    SELECT COALESCE(diskon, 0) AS diskon
-    FROM invoices
-    WHERE id = $invoice_id
-    LIMIT 1
-");
-
-if (!$invQ) {
-    exit("Ambil diskon invoices gagal: " . mysqli_error($conn));
-}
-
-$invData = mysqli_fetch_assoc($invQ);
-$diskon = (int)$invData['diskon'];
-
-$total = $subtotal_total - $diskon;
-if ($total < 0) {
-    $total = 0;
-}
-
-$updateInvoice = mysqli_query($conn, "
-    UPDATE invoices
-    SET subtotal = $subtotal_total,
-        total = $total
-    WHERE id = $invoice_id
-");
-
-if (!$updateInvoice) {
-    exit("Gagal update total invoices: " . mysqli_error($conn));
-}
-
-echo "OK tindakan masuk ke odontogram dan billing";
-exit;
