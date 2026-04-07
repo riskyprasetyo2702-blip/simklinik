@@ -25,8 +25,8 @@ if ($editId > 0) {
     }
 }
 
-$pasienList = pasien_options();
-$icd10List  = icd10_options($qIcd);
+$pasienList   = pasien_options();
+$icd10List    = icd10_options($qIcd);
 $tindakanList = tindakan_options();
 
 $kunjunganList = [];
@@ -81,9 +81,39 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
 @media(max-width:900px){.grid{grid-template-columns:1fr}}
 </style>
 <script>
-function pilihIcd(kode, nama) {
-    document.getElementById('icd10_code').value = kode;
-    document.getElementById('diagnosa').value = nama;
+function tambahIcdDariMaster(sel) {
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt || !opt.value) return;
+
+    const kode = opt.getAttribute('data-kode') || '';
+    const nama = opt.getAttribute('data-nama') || '';
+    const gabung = kode + ' - ' + nama;
+
+    const codeInput = document.getElementById('icd10_code');
+    const diagArea = document.getElementById('diagnosa');
+
+    const codeCurrent = codeInput.value.trim();
+    const diagCurrent = diagArea.value.trim();
+
+    if (codeCurrent === '') {
+        codeInput.value = kode;
+    } else {
+        const arrCode = codeCurrent.split(',').map(v => v.trim()).filter(Boolean);
+        if (!arrCode.includes(kode)) {
+            codeInput.value = codeCurrent + ', ' + kode;
+        }
+    }
+
+    if (diagCurrent === '') {
+        diagArea.value = gabung;
+    } else {
+        const lines = diagCurrent.split('\n').map(v => v.trim()).filter(Boolean);
+        if (!lines.includes(gabung)) {
+            diagArea.value = diagCurrent + "\n" + gabung;
+        }
+    }
+
+    sel.selectedIndex = 0;
 }
 
 function tambahTindakanDariMaster(sel) {
@@ -135,8 +165,8 @@ function tambahTindakanDariMaster(sel) {
                     <select name="pasien_id" required>
                         <option value="">Pilih pasien</option>
                         <?php foreach ($pasienList as $p): ?>
-                            <option value="<?= (int)$p['id'] ?>"
-                                <?= ((int)($editData['pasien_id'] ?? $pasienId) === (int)$p['id']) ? 'selected' : '' ?>>
+                            <option value="<?= (int)($p['id'] ?? 0) ?>"
+                                <?= ((int)($editData['pasien_id'] ?? $pasienId) === (int)($p['id'] ?? 0)) ? 'selected' : '' ?>>
                                 <?= e($p['no_rm'] ?? '') ?> - <?= e($p['nama'] ?? '') ?>
                             </option>
                         <?php endforeach; ?>
@@ -158,13 +188,37 @@ function tambahTindakanDariMaster(sel) {
                 </div>
 
                 <div>
-                    <label>Kode ICD-10</label>
-                    <input type="text" id="icd10_code" name="icd10_code" value="<?= e($selectedIcd) ?>" placeholder="Contoh: K02.1">
+                    <label>Pilih ICD-10 dari Master</label>
+                    <select onchange="tambahIcdDariMaster(this)">
+                        <option value="">Pilih ICD-10...</option>
+                        <?php foreach ($icd10List as $icd): ?>
+                            <option
+                                value="<?= e($icd['kode'] ?? '') ?>"
+                                data-kode="<?= e($icd['kode'] ?? '') ?>"
+                                data-nama="<?= e($icd['diagnosis'] ?? '') ?>">
+                                <?= e($icd['kode'] ?? '') ?> - <?= e($icd['diagnosis'] ?? '') ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
 
                 <div>
+                    <label>Kode ICD-10</label>
+                    <input
+                        type="text"
+                        id="icd10_code"
+                        name="icd10_code"
+                        value="<?= e($selectedIcd) ?>"
+                        placeholder="Contoh: K02.1, K04.0">
+                </div>
+
+                <div class="full">
                     <label>Diagnosa</label>
-                    <input type="text" id="diagnosa" name="diagnosa" value="<?= e($editData['diagnosa'] ?? '') ?>" placeholder="Diagnosa akan bisa diisi dari ICD-10">
+                    <textarea
+                        id="diagnosa"
+                        name="diagnosa"
+                        rows="4"
+                        placeholder="Diagnosa bisa dipilih dari master ICD-10 atau ditulis manual"><?= e($editData['diagnosa'] ?? '') ?></textarea>
                 </div>
 
                 <div>
@@ -200,7 +254,7 @@ function tambahTindakanDariMaster(sel) {
             </div>
 
             <div class="help">
-                Cari diagnosa cepat dari daftar ICD-10 di bawah, lalu klik salah satu item agar otomatis masuk ke kolom <strong>Kode ICD-10</strong> dan <strong>Diagnosa</strong>.
+                ICD-10 sekarang dibuat seperti input tindakan: pilih dari master lalu masuk ke kolom <strong>Kode ICD-10</strong> dan <strong>Diagnosa</strong>. Kamu juga tetap bisa menulis manual bila diperlukan.
             </div>
 
             <div style="margin-top:16px" class="row">
@@ -214,7 +268,7 @@ function tambahTindakanDariMaster(sel) {
 
     <div class="card">
         <div class="row" style="margin-bottom:12px">
-            <h2 class="section-title" style="margin:0">Pilih ICD-10</h2>
+            <h2 class="section-title" style="margin:0">Filter ICD-10 Master</h2>
             <form method="get" class="row" style="margin:0">
                 <?php if ($pasienId > 0): ?>
                     <input type="hidden" name="pasien_id" value="<?= (int)$pasienId ?>">
@@ -226,35 +280,7 @@ function tambahTindakanDariMaster(sel) {
                 <button type="submit" style="width:auto">Cari ICD-10</button>
             </form>
         </div>
-
-        <div class="table-wrap">
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th style="width:120px">Kode</th>
-                        <th>Diagnosis</th>
-                        <th style="width:140px">Aksi</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($icd10List as $icd): ?>
-                        <tr>
-                            <td><span class="badge"><?= e($icd['kode'] ?? '') ?></span></td>
-                            <td><?= e($icd['diagnosis'] ?? '') ?></td>
-                            <td>
-                                <button type="button" class="btn blue" style="width:auto;padding:8px 12px"
-                                    onclick="pilihIcd('<?= e($icd['kode'] ?? '') ?>','<?= e($icd['diagnosis'] ?? '') ?>')">
-                                    Pilih
-                                </button>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    <?php if (!$icd10List): ?>
-                        <tr><td colspan="3">Data ICD-10 tidak ditemukan.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
+        <div class="small">Hasil pencarian ini dipakai untuk isi dropdown ICD-10 di form atas.</div>
     </div>
 
     <div class="card">
@@ -282,7 +308,7 @@ function tambahTindakanDariMaster(sel) {
                             <td><?= nl2br(e($k['keluhan'] ?? '')) ?></td>
                             <td>
                                 <?= e($k['icd10_code'] ?? '') ?><br>
-                                <strong><?= e($k['diagnosa'] ?? '') ?></strong>
+                                <strong><?= nl2br(e($k['diagnosa'] ?? '')) ?></strong>
                             </td>
                             <td><?= nl2br(e($k['tindakan'] ?? '')) ?></td>
                             <td class="actions">
