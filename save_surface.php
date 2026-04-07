@@ -86,35 +86,59 @@ function ensure_invoice_exists_for_visit($pasienId, $kunjunganId) {
 }
 
 function insert_invoice_item_safe($conn, $invoiceId, $tindakanId, $nama, $qty, $harga, $subtotal, $catatan = '') {
-    $hasTindakanId = column_exists_local($conn, 'invoice_items', 'tindakan_id');
-    $hasKeterangan = column_exists_local($conn, 'invoice_items', 'keterangan');
-
-    if ($hasTindakanId && $hasKeterangan) {
-        $ok = db_insert(
-            "INSERT INTO invoice_items (invoice_id, tindakan_id, nama_item, qty, harga, subtotal, keterangan)
-             VALUES (?,?,?,?,?,?,?)",
-            [$invoiceId, $tindakanId, $nama, $qty, $harga, $subtotal, $catatan]
-        );
-    } elseif ($hasTindakanId && !$hasKeterangan) {
-        $ok = db_insert(
-            "INSERT INTO invoice_items (invoice_id, tindakan_id, nama_item, qty, harga, subtotal)
-             VALUES (?,?,?,?,?,?)",
-            [$invoiceId, $tindakanId, $nama, $qty, $harga, $subtotal]
-        );
-    } elseif (!$hasTindakanId && $hasKeterangan) {
-        $ok = db_insert(
-            "INSERT INTO invoice_items (invoice_id, nama_item, qty, harga, subtotal, keterangan)
-             VALUES (?,?,?,?,?,?)",
-            [$invoiceId, $nama, $qty, $harga, $subtotal, $catatan]
-        );
-    } else {
-        $ok = db_insert(
-            "INSERT INTO invoice_items (invoice_id, nama_item, qty, harga, subtotal)
-             VALUES (?,?,?,?,?)",
-            [$invoiceId, $nama, $qty, $harga, $subtotal]
-        );
+    $nameCol = null;
+    foreach (['nama_item', 'item', 'deskripsi', 'nama_tindakan', 'tindakan'] as $col) {
+        if (column_exists_local($conn, 'invoice_items', $col)) {
+            $nameCol = $col;
+            break;
+        }
     }
 
+    if (!$nameCol) {
+        throw new Exception('Kolom nama item pada invoice_items tidak ditemukan.');
+    }
+
+    $cols = ['invoice_id', $nameCol];
+    $vals = [$invoiceId, $nama];
+
+    if (column_exists_local($conn, 'invoice_items', 'tindakan_id')) {
+        $cols[] = 'tindakan_id';
+        $vals[] = $tindakanId;
+    }
+
+    if (column_exists_local($conn, 'invoice_items', 'qty')) {
+        $cols[] = 'qty';
+        $vals[] = $qty;
+    }
+
+    if (column_exists_local($conn, 'invoice_items', 'harga')) {
+        $cols[] = 'harga';
+        $vals[] = $harga;
+    } elseif (column_exists_local($conn, 'invoice_items', 'price')) {
+        $cols[] = 'price';
+        $vals[] = $harga;
+    }
+
+    if (column_exists_local($conn, 'invoice_items', 'subtotal')) {
+        $cols[] = 'subtotal';
+        $vals[] = $subtotal;
+    } elseif (column_exists_local($conn, 'invoice_items', 'total')) {
+        $cols[] = 'total';
+        $vals[] = $subtotal;
+    }
+
+    if (column_exists_local($conn, 'invoice_items', 'keterangan')) {
+        $cols[] = 'keterangan';
+        $vals[] = $catatan;
+    } elseif (column_exists_local($conn, 'invoice_items', 'notes')) {
+        $cols[] = 'notes';
+        $vals[] = $catatan;
+    }
+
+    $placeholders = implode(',', array_fill(0, count($cols), '?'));
+    $sql = "INSERT INTO invoice_items (" . implode(',', $cols) . ") VALUES ($placeholders)";
+
+    $ok = db_insert($sql, $vals);
     if (!$ok) {
         throw new Exception('Gagal simpan item invoice dari odontogram.');
     }
@@ -151,6 +175,14 @@ $subtotal     = to_float(postv('subtotal', 0));
 $satuanHarga  = trim((string)postv('satuan_harga', 'per tindakan'));
 $catatan      = trim((string)postv('catatan', ''));
 $sendToBilling = (string)postv('send_to_billing', '1') === '1';
+
+/*
+ * kalau pasien_id kosong, ambil dari kunjungan
+ */
+if ($kunjunganId > 0 && $pasienId <= 0) {
+    $k = db_fetch_one("SELECT pasien_id FROM kunjungan WHERE id=? LIMIT 1", [$kunjunganId]);
+    $pasienId = (int)($k['pasien_id'] ?? 0);
+}
 
 if ($pasienId <= 0) {
     http_response_code(422);
