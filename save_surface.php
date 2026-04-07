@@ -95,7 +95,7 @@ function insert_invoice_item_safe($conn, $invoiceId, $tindakanId, $nama, $qty, $
     }
 
     if (!$nameCol) {
-        throw new Exception('Kolom nama item pada invoice_items tidak ditemukan.');
+        throw new Exception('Kolom nama item invoice_items tidak ditemukan.');
     }
 
     $cols = ['invoice_id', $nameCol];
@@ -176,9 +176,7 @@ $satuanHarga  = trim((string)postv('satuan_harga', 'per tindakan'));
 $catatan      = trim((string)postv('catatan', ''));
 $sendToBilling = (string)postv('send_to_billing', '1') === '1';
 
-/*
- * kalau pasien_id kosong, ambil dari kunjungan
- */
+/* fallback ambil pasien dari kunjungan */
 if ($kunjunganId > 0 && $pasienId <= 0) {
     $k = db_fetch_one("SELECT pasien_id FROM kunjungan WHERE id=? LIMIT 1", [$kunjunganId]);
     $pasienId = (int)($k['pasien_id'] ?? 0);
