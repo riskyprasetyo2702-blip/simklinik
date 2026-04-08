@@ -334,7 +334,311 @@ function icd10_options($keyword = '')
 | - fungsi ini dibuat aman
 |--------------------------------------------------------------------------
 */
-function sync_invoice_finance($invoiceId)
+<?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+require_once __DIR__ . '/config.php';
+
+define('KLINIK_NAMA', 'Klinik Praktek Mandiri Dokter Gigi Andreas Aryo Risky Prasetyo');
+define('KLINIK_ALAMAT', 'Alamat klinik');
+define('KLINIK_TELP', 'Telepon klinik');
+
+function db()
+{
+    global $conn, $koneksi, $mysqli, $db;
+    if (isset($conn) && $conn instanceof mysqli) return $conn;
+    if (isset($koneksi) && $koneksi instanceof mysqli) return $koneksi;
+    if (isset($mysqli) && $mysqli instanceof mysqli) return $mysqli;
+    if (isset($db) && $db instanceof mysqli) return $db;
+    return null;
+}
+
+function ensure_logged_in()
+{
+    if (
+        !isset($_SESSION['user_id']) &&
+        !isset($_SESSION['username']) &&
+        !isset($_SESSION['nama']) &&
+        !isset($_SESSION['user'])
+    ) {
+        header('Location: login.php');
+        exit;
+    }
+}
+
+function current_user_name()
+{
+    if (!empty($_SESSION['username'])) return $_SESSION['username'];
+    if (!empty($_SESSION['nama'])) return $_SESSION['nama'];
+    return 'Administrator';
+}
+
+function e($str)
+{
+    return htmlspecialchars((string)($str ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
+function rupiah($n)
+{
+    return 'Rp ' . number_format((float)$n, 0, ',', '.');
+}
+
+function flash_message()
+{
+    if (!empty($_SESSION['success'])) {
+        echo '<div style="background:#dcfce7;color:#166534;padding:12px 14px;border-radius:12px;margin-bottom:14px;border:1px solid #86efac;">' . e($_SESSION['success']) . '</div>';
+        unset($_SESSION['success']);
+    }
+
+    if (!empty($_SESSION['error'])) {
+        echo '<div style="background:#fee2e2;color:#991b1b;padding:12px 14px;border-radius:12px;margin-bottom:14px;border:1px solid #fca5a5;">' . e($_SESSION['error']) . '</div>';
+        unset($_SESSION['error']);
+    }
+}
+
+function table_exists($conn, $table)
+{
+    if (!$conn) return false;
+    $table = $conn->real_escape_string($table);
+    $res = $conn->query("SHOW TABLES LIKE '$table'");
+    return $res && $res->num_rows > 0;
+}
+
+function column_exists($conn, $table, $column)
+{
+    if (!$conn || !table_exists($conn, $table)) return false;
+    $table = $conn->real_escape_string($table);
+    $column = $conn->real_escape_string($column);
+    $res = $conn->query("SHOW COLUMNS FROM `$table` LIKE '$column'");
+    return $res && $res->num_rows > 0;
+}
+
+function db_fetch_all($query, $params = [])
+{
+    $conn = db();
+    if (!$conn) return [];
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) return [];
+
+    if (!empty($params)) {
+        $types = '';
+        foreach ($params as $p) {
+            if (is_int($p)) $types .= 'i';
+            elseif (is_float($p)) $types .= 'd';
+            else $types .= 's';
+        }
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $rows = [];
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            $rows[] = $row;
+        }
+    }
+
+    $stmt->close();
+    return $rows;
+}
+
+function db_fetch_one($query, $params = [])
+{
+    $rows = db_fetch_all($query, $params);
+    return $rows[0] ?? null;
+}
+
+function db_run($query, $params = [])
+{
+    $conn = db();
+    if (!$conn) return false;
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) return false;
+
+    if (!empty($params)) {
+        $types = '';
+        foreach ($params as $p) {
+            if (is_int($p)) $types .= 'i';
+            elseif (is_float($p)) $types .= 'd';
+            else $types .= 's';
+        }
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function db_insert($query, $params = [])
+{
+    $conn = db();
+    if (!$conn) return false;
+
+    $stmt = $conn->prepare($query);
+    if (!$stmt) return false;
+
+    if (!empty($params)) {
+        $types = '';
+        foreach ($params as $p) {
+            if (is_int($p)) $types .= 'i';
+            elseif (is_float($p)) $types .= 'd';
+            else $types .= 's';
+        }
+        $stmt->bind_param($types, ...$params);
+    }
+
+    $ok = $stmt->execute();
+    $id = $ok ? $conn->insert_id : false;
+    $stmt->close();
+    return $id;
+}
+
+function next_invoice_no()
+{
+    $conn = db();
+    $date = date('Ymd');
+
+    if (!$conn || !table_exists($conn, 'invoice')) {
+        return 'INV-' . $date . '-0001';
+    }
+
+    $row = db_fetch_one(
+        "SELECT no_invoice FROM invoice WHERE no_invoice LIKE ? ORDER BY id DESC LIMIT 1",
+        ["INV-$date-%"]
+    );
+
+    $num = 1;
+    if (!empty($row['no_invoice']) && preg_match('/-(\d+)$/', $row['no_invoice'], $m)) {
+        $num = ((int)$m[1]) + 1;
+    }
+
+    return 'INV-' . $date . '-' . str_pad((string)$num, 4, '0', STR_PAD_LEFT);
+}
+
+function tindakan_options()
+{
+    $conn = db();
+    if (!$conn || !table_exists($conn, 'tindakan')) return [];
+
+    $sql = "SELECT * FROM tindakan";
+    if (column_exists($conn, 'tindakan', 'aktif')) {
+        $sql .= " WHERE aktif='yes'";
+    }
+    $sql .= " ORDER BY kategori ASC, nama_tindakan ASC, id ASC";
+
+    return db_fetch_all($sql);
+}
+
+/*
+|--------------------------------------------------------------------------
+| SINKRON INVOICE -> KEUANGAN
+|--------------------------------------------------------------------------
+*/
+function sync_invoice_finance($invoice_id)
+{
+    $conn = db();
+    if (!$conn) return true;
+
+    if (!table_exists($conn, 'invoice') || !table_exists($conn, 'keuangan')) {
+        return true;
+    }
+
+    $inv = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [(int)$invoice_id]);
+    if (!$inv) return true;
+
+    $status = strtolower(trim((string)($inv['status_bayar'] ?? '')));
+    $total = (float)($inv['total'] ?? 0);
+
+    // jika status bukan lunas, hapus jejak keuangan invoice ini
+    if ($status !== 'lunas') {
+        if (column_exists($conn, 'keuangan', 'invoice_id')) {
+            db_run("DELETE FROM keuangan WHERE invoice_id = ?", [(int)$invoice_id]);
+        }
+        return true;
+    }
+
+    $cek = null;
+    if (column_exists($conn, 'keuangan', 'invoice_id')) {
+        $cek = db_fetch_one("SELECT id FROM keuangan WHERE invoice_id = ?", [(int)$invoice_id]);
+    }
+
+    $data = [];
+    if (column_exists($conn, 'keuangan', 'invoice_id')) $data['invoice_id'] = (int)$invoice_id;
+    if (column_exists($conn, 'keuangan', 'pasien_id')) $data['pasien_id'] = (int)($inv['pasien_id'] ?? 0);
+    if (column_exists($conn, 'keuangan', 'tanggal')) $data['tanggal'] = $inv['tanggal'] ?? date('Y-m-d H:i:s');
+    if (column_exists($conn, 'keuangan', 'deskripsi')) $data['deskripsi'] = 'Pembayaran Invoice ' . ($inv['no_invoice'] ?? '');
+    if (column_exists($conn, 'keuangan', 'metode_bayar')) $data['metode_bayar'] = $inv['metode_bayar'] ?? 'tunai';
+    if (column_exists($conn, 'keuangan', 'nominal')) $data['nominal'] = $total;
+    if (column_exists($conn, 'keuangan', 'jenis')) $data['jenis'] = 'pemasukan';
+    if (column_exists($conn, 'keuangan', 'created_at')) $data['created_at'] = date('Y-m-d H:i:s');
+
+    if (empty($data)) return true;
+
+    if ($cek) {
+        $setParts = [];
+        $params = [];
+
+        foreach ($data as $col => $val) {
+            if ($col === 'invoice_id') continue;
+            $setParts[] = "`$col` = ?";
+            $params[] = $val;
+        }
+
+        $params[] = (int)$invoice_id;
+
+        $sql = "UPDATE keuangan SET " . implode(', ', $setParts) . " WHERE invoice_id = ?";
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) return true;
+
+        $types = '';
+        for ($i = 0; $i < count($params) - 1; $i++) {
+            if (is_int($params[$i])) $types .= 'i';
+            elseif (is_float($params[$i])) $types .= 'd';
+            else $types .= 's';
+        }
+        $types .= 'i';
+
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $stmt->close();
+        return true;
+    }
+
+    $cols = [];
+    $holders = [];
+    $params = [];
+
+    foreach ($data as $col => $val) {
+        $cols[] = "`$col`";
+        $holders[] = "?";
+        $params[] = $val;
+    }
+
+    $sql = "INSERT INTO keuangan (" . implode(',', $cols) . ") VALUES (" . implode(',', $holders) . ")";
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) return true;
+
+    $types = '';
+    foreach ($params as $p) {
+        if (is_int($p)) $types .= 'i';
+        elseif (is_float($p)) $types .= 'd';
+        else $types .= 's';
+    }
+
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $stmt->close();
+
+    return true;
+    
+}function sync_invoice_finance($invoiceId)
 {
     $conn = db();
     if (!$conn) return true;
