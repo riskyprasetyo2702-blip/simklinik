@@ -14,23 +14,32 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-function post_val($key, $default = '')
-{
-    return trim($_POST[$key] ?? $default);
+if (!table_exists($conn, 'kunjungan')) {
+    $_SESSION['error'] = 'Tabel kunjungan tidak ditemukan.';
+    header('Location: kunjungan.php');
+    exit;
 }
 
-$id        = (int)($_POST['id'] ?? 0);
-$pasien_id = (int)($_POST['pasien_id'] ?? 0);
-$tanggal   = post_val('tanggal');
-$keluhan   = post_val('keluhan');
-$diagnosa  = post_val('diagnosa');
-$dokter    = post_val('dokter');
-$tindakan  = post_val('tindakan');
-$catatan   = post_val('catatan');
+/*
+|--------------------------------------------------------------------------
+| Ambil data dari form
+|--------------------------------------------------------------------------
+*/
+$id         = (int)($_POST['id'] ?? 0);
+$pasien_id  = (int)($_POST['pasien_id'] ?? 0);
+$tanggal    = trim($_POST['tanggal'] ?? '');
+$keluhan    = trim($_POST['keluhan'] ?? '');
+$diagnosa   = trim($_POST['diagnosa'] ?? '');
+$icd10_code = trim($_POST['icd10_code'] ?? '');
+$dokter     = trim($_POST['dokter'] ?? '');
+$tindakan   = trim($_POST['tindakan'] ?? '');
+$catatan    = trim($_POST['catatan'] ?? '');
 
-// dukungan opsional jika nanti form baru pakai ICD-10
-$icd10_code = post_val('icd10_code');
-
+/*
+|--------------------------------------------------------------------------
+| Validasi dasar
+|--------------------------------------------------------------------------
+*/
 if ($pasien_id <= 0) {
     $_SESSION['error'] = 'Pasien wajib dipilih.';
     header('Location: kunjungan.php' . ($id > 0 ? '?edit=' . $id : ''));
@@ -39,25 +48,15 @@ if ($pasien_id <= 0) {
 
 if ($tanggal === '') {
     $_SESSION['error'] = 'Tanggal kunjungan wajib diisi.';
-    header('Location: kunjungan.php' . ($id > 0 ? '?edit=' . $id : '?pasien_id=' . $pasien_id));
+    header('Location: kunjungan.php?pasien_id=' . $pasien_id);
     exit;
 }
 
-if (!table_exists($conn, 'kunjungan')) {
-    $_SESSION['error'] = 'Tabel kunjungan tidak ditemukan.';
-    header('Location: kunjungan.php');
-    exit;
-}
-
-// Validasi pasien ada
-$cekPasien = db_fetch_one("SELECT id FROM pasien WHERE id = ?", [$pasien_id]);
-if (!$cekPasien) {
-    $_SESSION['error'] = 'Data pasien tidak ditemukan.';
-    header('Location: kunjungan.php');
-    exit;
-}
-
-// Susun kolom yang benar-benar ada di tabel
+/*
+|--------------------------------------------------------------------------
+| Susun kolom yang ada di DB
+|--------------------------------------------------------------------------
+*/
 $dataMap = [
     'pasien_id'  => $pasien_id,
     'tanggal'    => $tanggal,
@@ -82,7 +81,13 @@ if (empty($columns)) {
     exit;
 }
 
+/*
+|--------------------------------------------------------------------------
+| UPDATE DATA
+|--------------------------------------------------------------------------
+*/
 if ($id > 0) {
+
     $setParts = [];
     $params = [];
 
@@ -101,31 +106,42 @@ if ($id > 0) {
 
     $stmt = $conn->prepare($sql);
     if (!$stmt) {
-        $_SESSION['error'] = 'Gagal menyiapkan update kunjungan: ' . $conn->error;
+        $_SESSION['error'] = 'Gagal prepare update: ' . $conn->error;
         header('Location: kunjungan.php?edit=' . $id);
         exit;
     }
 
     $types = '';
     for ($i = 0; $i < count($params) - 1; $i++) {
-        $types .= is_int($params[$i]) ? 'i' : 's';
+        if (is_int($params[$i])) {
+            $types .= 'i';
+        } elseif (is_float($params[$i])) {
+            $types .= 'd';
+        } else {
+            $types .= 's';
+        }
     }
     $types .= 'i';
 
     $stmt->bind_param($types, ...$params);
+    $ok = $stmt->execute();
+    $stmt->close();
 
-    if ($stmt->execute()) {
+    if ($ok) {
         $_SESSION['success'] = 'Kunjungan berhasil diperbarui.';
-        header('Location: kunjungan.php?pasien_id=' . $pasien_id);
-        exit;
+    } else {
+        $_SESSION['error'] = 'Gagal update kunjungan.';
     }
 
-    $_SESSION['error'] = 'Gagal memperbarui kunjungan: ' . $stmt->error;
-    header('Location: kunjungan.php?edit=' . $id);
+    header('Location: kunjungan.php?pasien_id=' . $pasien_id);
     exit;
 }
 
-// INSERT
+/*
+|--------------------------------------------------------------------------
+| INSERT DATA
+|--------------------------------------------------------------------------
+*/
 $insertCols = [];
 $placeholders = [];
 $params = [];
@@ -151,7 +167,7 @@ $sql = "INSERT INTO kunjungan (" . implode(', ', $insertCols) . ")
 
 $stmt = $conn->prepare($sql);
 if (!$stmt) {
-    $_SESSION['error'] = 'Gagal menyiapkan simpan kunjungan: ' . $conn->error;
+    $_SESSION['error'] = 'Gagal prepare insert: ' . $conn->error;
     header('Location: kunjungan.php?pasien_id=' . $pasien_id);
     exit;
 }
@@ -159,18 +175,26 @@ if (!$stmt) {
 if (!empty($params)) {
     $types = '';
     foreach ($params as $p) {
-        $types .= is_int($p) ? 'i' : 's';
+        if (is_int($p)) {
+            $types .= 'i';
+        } elseif (is_float($p)) {
+            $types .= 'd';
+        } else {
+            $types .= 's';
+        }
     }
+
     $stmt->bind_param($types, ...$params);
 }
 
-if ($stmt->execute()) {
-    $kunjungan_baru_id = $conn->insert_id;
+$ok = $stmt->execute();
+$stmt->close();
+
+if ($ok) {
     $_SESSION['success'] = 'Kunjungan berhasil disimpan.';
-    header('Location: kunjungan.php?pasien_id=' . $pasien_id);
-    exit;
+} else {
+    $_SESSION['error'] = 'Gagal menyimpan kunjungan.';
 }
 
-$_SESSION['error'] = 'Gagal menyimpan kunjungan: ' . $stmt->error;
 header('Location: kunjungan.php?pasien_id=' . $pasien_id);
 exit;
