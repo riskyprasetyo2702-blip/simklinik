@@ -17,11 +17,6 @@ $edit_id      = (int)($_GET['edit'] ?? 0);
 
 $invoice = null;
 
-/*
-|--------------------------------------------------------------------------
-| Ambil invoice existing / buat baru
-|--------------------------------------------------------------------------
-*/
 if ($edit_id > 0) {
     $invoice = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$edit_id]);
 }
@@ -53,11 +48,6 @@ $invoice_id = (int)$invoice['id'];
 $pasien_id = (int)($invoice['pasien_id'] ?? 0);
 $kunjungan_id = (int)($invoice['kunjungan_id'] ?? 0);
 
-/*
-|--------------------------------------------------------------------------
-| Ambil data pasien / kunjungan
-|--------------------------------------------------------------------------
-*/
 $pasien = null;
 if ($pasien_id > 0 && table_exists($conn, 'pasien')) {
     $pasien = db_fetch_one("SELECT * FROM pasien WHERE id = ?", [$pasien_id]);
@@ -70,7 +60,7 @@ if ($kunjungan_id > 0 && table_exists($conn, 'kunjungan')) {
 
 /*
 |--------------------------------------------------------------------------
-| Auto tarik item dari odontogram -> invoice_items
+| Auto tarik item odontogram ke invoice_items
 |--------------------------------------------------------------------------
 */
 if ($invoice_id > 0 && table_exists($conn, 'odontogram_tindakan') && table_exists($conn, 'invoice_items')) {
@@ -83,61 +73,31 @@ if ($invoice_id > 0 && table_exists($conn, 'odontogram_tindakan') && table_exist
         $namaOd = $o['nama_tindakan'] ?? '';
         $gigiOd = $o['nomor_gigi'] ?? '';
 
+        $nameCol = column_exists($conn, 'invoice_items', 'nama_tindakan') ? 'nama_tindakan' : 'nama_item';
+        $toothCol = column_exists($conn, 'invoice_items', 'tooth_number') ? 'tooth_number' : 'nomor_gigi';
+
         $cek = db_fetch_one(
-            "SELECT id FROM invoice_items WHERE invoice_id = ? AND 
-             " .
-             (column_exists($conn, 'invoice_items', 'nama_tindakan') ? "nama_tindakan = ?" : "nama_item = ?") .
-             " AND " .
-             (column_exists($conn, 'invoice_items', 'tooth_number') ? "tooth_number = ?" : "nomor_gigi = ?") .
-             " LIMIT 1",
+            "SELECT id FROM invoice_items WHERE invoice_id = ? AND `$nameCol` = ? AND `$toothCol` = ? LIMIT 1",
             [$invoice_id, $namaOd, $gigiOd]
         );
 
         if (!$cek) {
             $data = [];
 
-            if (column_exists($conn, 'invoice_items', 'invoice_id')) {
-                $data['invoice_id'] = $invoice_id;
-            }
-            if (column_exists($conn, 'invoice_items', 'treatment_id')) {
-                $data['treatment_id'] = (int)($o['tindakan_id'] ?? 0);
-            }
-            if (column_exists($conn, 'invoice_items', 'tindakan_id')) {
-                $data['tindakan_id'] = (int)($o['tindakan_id'] ?? 0);
-            }
-            if (column_exists($conn, 'invoice_items', 'nama_tindakan')) {
-                $data['nama_tindakan'] = $namaOd;
-            }
-            if (column_exists($conn, 'invoice_items', 'nama_item')) {
-                $data['nama_item'] = $namaOd;
-            }
-            if (column_exists($conn, 'invoice_items', 'qty')) {
-                $data['qty'] = (float)($o['qty'] ?? 1);
-            }
-            if (column_exists($conn, 'invoice_items', 'harga')) {
-                $data['harga'] = (float)($o['harga'] ?? 0);
-            }
-            if (column_exists($conn, 'invoice_items', 'subtotal')) {
-                $data['subtotal'] = (float)($o['subtotal'] ?? 0);
-            }
-            if (column_exists($conn, 'invoice_items', 'tooth_number')) {
-                $data['tooth_number'] = $gigiOd;
-            }
-            if (column_exists($conn, 'invoice_items', 'nomor_gigi')) {
-                $data['nomor_gigi'] = $gigiOd;
-            }
-            if (column_exists($conn, 'invoice_items', 'surface_code')) {
-                $data['surface_code'] = $o['surface_code'] ?? '';
-            }
-            if (column_exists($conn, 'invoice_items', 'keterangan')) {
-                $data['keterangan'] = 'odontogram';
-            }
-            if (column_exists($conn, 'invoice_items', 'sumber')) {
-                $data['sumber'] = 'odontogram';
-            }
-            if (column_exists($conn, 'invoice_items', 'created_at')) {
-                $data['created_at'] = date('Y-m-d H:i:s');
-            }
+            if (column_exists($conn, 'invoice_items', 'invoice_id')) $data['invoice_id'] = $invoice_id;
+            if (column_exists($conn, 'invoice_items', 'treatment_id')) $data['treatment_id'] = (int)($o['tindakan_id'] ?? 0);
+            if (column_exists($conn, 'invoice_items', 'tindakan_id')) $data['tindakan_id'] = (int)($o['tindakan_id'] ?? 0);
+            if (column_exists($conn, 'invoice_items', 'nama_tindakan')) $data['nama_tindakan'] = $namaOd;
+            if (column_exists($conn, 'invoice_items', 'nama_item')) $data['nama_item'] = $namaOd;
+            if (column_exists($conn, 'invoice_items', 'qty')) $data['qty'] = (float)($o['qty'] ?? 1);
+            if (column_exists($conn, 'invoice_items', 'harga')) $data['harga'] = (float)($o['harga'] ?? 0);
+            if (column_exists($conn, 'invoice_items', 'subtotal')) $data['subtotal'] = (float)($o['subtotal'] ?? 0);
+            if (column_exists($conn, 'invoice_items', 'tooth_number')) $data['tooth_number'] = $gigiOd;
+            if (column_exists($conn, 'invoice_items', 'nomor_gigi')) $data['nomor_gigi'] = $gigiOd;
+            if (column_exists($conn, 'invoice_items', 'surface_code')) $data['surface_code'] = $o['surface_code'] ?? '';
+            if (column_exists($conn, 'invoice_items', 'keterangan')) $data['keterangan'] = 'odontogram';
+            if (column_exists($conn, 'invoice_items', 'sumber')) $data['sumber'] = 'odontogram';
+            if (column_exists($conn, 'invoice_items', 'created_at')) $data['created_at'] = date('Y-m-d H:i:s');
 
             if (!empty($data)) {
                 $cols = [];
@@ -182,11 +142,6 @@ if (isset($_GET['hapus_item']) && table_exists($conn, 'invoice_items')) {
     exit;
 }
 
-/*
-|--------------------------------------------------------------------------
-| Ambil items
-|--------------------------------------------------------------------------
-*/
 $items = [];
 if (table_exists($conn, 'invoice_items')) {
     $items = db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC", [$invoice_id]);
@@ -228,6 +183,7 @@ body{margin:0;background:#f4f7fb;color:#0f172a}
 input,select,textarea,button{width:100%;padding:12px 14px;border:1px solid #cbd5e1;border-radius:12px}
 button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-block;border:none;font-weight:700;cursor:pointer;padding:12px 16px;border-radius:12px}
 .btn.secondary{background:#475569}
+.btn.green{background:#166534}
 .table-wrap{overflow:auto}
 .table{width:100%;border-collapse:collapse}
 .table th,.table td{padding:12px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
@@ -413,8 +369,9 @@ function hitungSubtotal(){
                 </table>
             </div>
 
-            <div style="margin-top:18px">
-                <button type="submit" name="simpan_invoice" value="1">Simpan Invoice</button>
+            <div class="row" style="margin-top:18px">
+                <button type="submit" name="simpan_invoice" value="1" style="width:auto">Simpan Invoice</button>
+                <button type="submit" name="selesai_dashboard" value="1" class="btn green" style="width:auto">Selesai & Kembali Dashboard</button>
             </div>
         </form>
     </div>
