@@ -1,8 +1,4 @@
 <?php
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
 require_once __DIR__ . '/bootstrap.php';
 ensure_logged_in();
 
@@ -19,44 +15,44 @@ $totalPemasukan = 0;
 $rekapMetode = [];
 $rekapStatus = [];
 
-/*
-|--------------------------------------------------------------------------
-| DETAIL KEUANGAN
-|--------------------------------------------------------------------------
-*/
-if (
-    table_exists($conn, 'keuangan') &&
-    column_exists($conn, 'keuangan', 'tanggal')
-) {
-    $select = [
-        "k.*"
-    ];
+if (table_exists($conn, 'keuangan') && column_exists($conn, 'keuangan', 'tanggal')) {
+    $select = ["k.*"];
+    $joinPasien = false;
+    $joinInvoice = false;
 
-    if (table_exists($conn, 'pasien')) {
+    if (
+        table_exists($conn, 'pasien') &&
+        column_exists($conn, 'keuangan', 'pasien_id')
+    ) {
         $select[] = "p.nama AS nama_pasien";
+        $joinPasien = true;
     } else {
         $select[] = "'' AS nama_pasien";
     }
 
-    if (table_exists($conn, 'invoice')) {
+    if (
+        table_exists($conn, 'invoice') &&
+        column_exists($conn, 'keuangan', 'invoice_id')
+    ) {
         $select[] = "i.no_invoice";
         $select[] = "i.status_bayar";
+        $joinInvoice = true;
     } else {
         $select[] = "'' AS no_invoice";
         $select[] = "'' AS status_bayar";
     }
 
-    $sql = "SELECT " . implode(", ", $select) . " FROM keuangan k ";
+    $sql = "SELECT " . implode(', ', $select) . " FROM keuangan k ";
 
-    if (table_exists($conn, 'pasien') && column_exists($conn, 'keuangan', 'pasien_id')) {
-        $sql .= " LEFT JOIN pasien p ON p.id = k.pasien_id ";
+    if ($joinPasien) {
+        $sql .= "LEFT JOIN pasien p ON p.id = k.pasien_id ";
     }
 
-    if (table_exists($conn, 'invoice') && column_exists($conn, 'keuangan', 'invoice_id')) {
-        $sql .= " LEFT JOIN invoice i ON i.id = k.invoice_id ";
+    if ($joinInvoice) {
+        $sql .= "LEFT JOIN invoice i ON i.id = k.invoice_id ";
     }
 
-    $sql .= " WHERE DATE(k.tanggal) BETWEEN ? AND ? ORDER BY k.tanggal DESC, k.id DESC";
+    $sql .= "WHERE DATE(k.tanggal) BETWEEN ? AND ? ORDER BY k.tanggal DESC, k.id DESC";
 
     $keuanganList = db_fetch_all($sql, [$tanggal_mulai, $tanggal_selesai]);
 
