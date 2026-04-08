@@ -36,7 +36,7 @@ if (!$invoice) {
 
 /*
 |--------------------------------------------------------------------------
-| Tambah item manual
+| TAMBAH ITEM MANUAL
 |--------------------------------------------------------------------------
 */
 if (isset($_POST['tambah_item'])) {
@@ -108,10 +108,7 @@ if (isset($_POST['tambah_item'])) {
         else $types .= 's';
     }
 
-    if ($params) {
-        $stmt->bind_param($types, ...$params);
-    }
-
+    $stmt->bind_param($types, ...$params);
     $ok = $stmt->execute();
     $err = $stmt->error;
     $stmt->close();
@@ -128,10 +125,10 @@ if (isset($_POST['tambah_item'])) {
 
 /*
 |--------------------------------------------------------------------------
-| Simpan invoice
+| SIMPAN INVOICE
 |--------------------------------------------------------------------------
 */
-if (isset($_POST['simpan_invoice'])) {
+if (isset($_POST['simpan_invoice']) || isset($_POST['selesai_dashboard'])) {
     $diskon = (float)($_POST['diskon'] ?? 0);
     $status_bayar = trim($_POST['status_bayar'] ?? 'belum terbayar');
     $metode_bayar = trim($_POST['metode_bayar'] ?? 'tunai');
@@ -141,7 +138,10 @@ if (isset($_POST['simpan_invoice'])) {
 
     $subtotal = 0;
     if (table_exists($conn, 'invoice_items')) {
-        $sum = db_fetch_one("SELECT COALESCE(SUM(subtotal),0) AS total_subtotal FROM invoice_items WHERE invoice_id = ?", [$invoice_id]);
+        $sum = db_fetch_one(
+            "SELECT COALESCE(SUM(subtotal),0) AS total_subtotal FROM invoice_items WHERE invoice_id = ?",
+            [$invoice_id]
+        );
         $subtotal = (float)($sum['total_subtotal'] ?? 0);
     }
 
@@ -208,13 +208,20 @@ if (isset($_POST['simpan_invoice'])) {
         exit;
     }
 
+    // sinkron ke keuangan
     try {
         sync_invoice_finance($invoice_id);
     } catch (Throwable $e) {
-        // invoice tetap aman walau sync keuangan gagal
+        // invoice tetap aman
     }
 
     $_SESSION['success'] = 'Invoice berhasil disimpan.';
+
+    if (isset($_POST['selesai_dashboard'])) {
+        header('Location: dashboard.php');
+        exit;
+    }
+
     header('Location: invoice.php?edit=' . $invoice_id);
     exit;
 }
