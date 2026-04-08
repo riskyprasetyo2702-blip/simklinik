@@ -4,359 +4,459 @@ ensure_logged_in();
 
 $conn = db();
 if (!$conn) {
-    die('Koneksi database gagal.');
+    die('Koneksi database tidak tersedia.');
 }
 
-function safe_table_exists_local($conn, $table) {
-    return function_exists('table_exists') ? table_exists($conn, $table) : false;
-}
+$userName = current_user_name();
 
-$bulanIni   = date('Y-m');
-$awalBulan  = date('Y-m-01 00:00:00');
-$akhirBulan = date('Y-m-t 23:59:59');
+/*
+|--------------------------------------------------------------------------
+| Statistik dashboard
+|--------------------------------------------------------------------------
+*/
+$totalPasien = 0;
+$totalKunjunganHariIni = 0;
+$totalInvoiceHariIni = 0;
+$totalPemasukanHariIni = 0;
 
-$totalPasien       = 0;
-$totalKunjungan    = 0;
-$totalInvoice      = 0;
-$totalPendapatan   = 0;
-$totalBelumLunas   = 0;
-$kunjunganTerakhir = [];
-$invoiceTerakhir   = [];
-$grafikLabel       = [];
-$grafikData        = [];
-
-if (safe_table_exists_local($conn, 'pasien')) {
+if (table_exists($conn, 'pasien')) {
     $row = db_fetch_one("SELECT COUNT(*) AS total FROM pasien");
     $totalPasien = (int)($row['total'] ?? 0);
 }
 
-if (safe_table_exists_local($conn, 'kunjungan')) {
-    $row = db_fetch_one("SELECT COUNT(*) AS total FROM kunjungan WHERE tanggal BETWEEN ? AND ?", [$awalBulan, $akhirBulan]);
-    $totalKunjungan = (int)($row['total'] ?? 0);
+if (table_exists($conn, 'kunjungan')) {
+    $row = db_fetch_one("SELECT COUNT(*) AS total FROM kunjungan WHERE DATE(tanggal) = CURDATE()");
+    $totalKunjunganHariIni = (int)($row['total'] ?? 0);
+}
 
-    $kunjunganTerakhir = db_fetch_all("
-        SELECT k.tanggal, p.no_rm, p.nama, COALESCE(k.tindakan, k.diagnosa, '-') AS tindakan
+if (table_exists($conn, 'invoice')) {
+    $row = db_fetch_one("SELECT COUNT(*) AS total FROM invoice WHERE DATE(tanggal) = CURDATE()");
+    $totalInvoiceHariIni = (int)($row['total'] ?? 0);
+}
+
+if (table_exists($conn, 'keuangan')) {
+    $row = db_fetch_one("
+        SELECT COALESCE(SUM(nominal),0) AS total
+        FROM keuangan
+        WHERE DATE(tanggal) = CURDATE()
+    ");
+    $totalPemasukanHariIni = (float)($row['total'] ?? 0);
+}
+
+/*
+|--------------------------------------------------------------------------
+| Kunjungan terbaru
+|--------------------------------------------------------------------------
+*/
+$kunjunganTerbaru = [];
+if (table_exists($conn, 'kunjungan') && table_exists($conn, 'pasien')) {
+    $kunjunganTerbaru = db_fetch_all("
+        SELECT k.*, p.no_rm, p.nama
         FROM kunjungan k
-        LEFT JOIN pasien p ON p.id = k.pasien_id
+        JOIN pasien p ON p.id = k.pasien_id
         ORDER BY k.tanggal DESC, k.id DESC
-        LIMIT 6
+        LIMIT 8
     ");
 }
 
-if (safe_table_exists_local($conn, 'invoice')) {
-    $row = db_fetch_one("SELECT COUNT(*) AS total FROM invoice");
-    $totalInvoice = (int)($row['total'] ?? 0);
-
-    $row = db_fetch_one("
-        SELECT COALESCE(SUM(total),0) AS total
-        FROM invoice
-        WHERE LOWER(COALESCE(status_bayar,'')) IN ('pending','belum terbayar')
-    ");
-    $totalBelumLunas = (float)($row['total'] ?? 0);
-
-    $invoiceTerakhir = db_fetch_all("
-        SELECT i.no_invoice, i.tanggal, i.total, i.status_bayar, p.nama
+/*
+|--------------------------------------------------------------------------
+| Invoice terbaru
+|--------------------------------------------------------------------------
+*/
+$invoiceTerbaru = [];
+if (table_exists($conn, 'invoice') && table_exists($conn, 'pasien')) {
+    $invoiceTerbaru = db_fetch_all("
+        SELECT i.*, p.nama
         FROM invoice i
         LEFT JOIN pasien p ON p.id = i.pasien_id
         ORDER BY i.tanggal DESC, i.id DESC
-        LIMIT 6
+        LIMIT 8
     ");
-}
-
-if (safe_table_exists_local($conn, 'keuangan')) {
-    $row = db_fetch_one("
-        SELECT COALESCE(SUM(CASE WHEN jenis='pemasukan' THEN nominal ELSE 0 END),0) AS total
-        FROM keuangan
-        WHERE tanggal BETWEEN ? AND ?
-    ", [$awalBulan, $akhirBulan]);
-
-    $totalPendapatan = (float)($row['total'] ?? 0);
-
-    $grafik = db_fetch_all("
-        SELECT DATE(tanggal) AS tgl,
-               COALESCE(SUM(CASE WHEN jenis='pemasukan' THEN nominal ELSE 0 END),0) AS total
-        FROM keuangan
-        WHERE tanggal BETWEEN ? AND ?
-        GROUP BY DATE(tanggal)
-        ORDER BY DATE(tanggal) ASC
-    ", [$awalBulan, $akhirBulan]);
-
-    foreach ($grafik as $g) {
-        $grafikLabel[] = date('d M', strtotime($g['tgl']));
-        $grafikData[]  = (float)($g['total'] ?? 0);
-    }
-}
-
-if (!$grafikLabel) {
-    for ($i = 6; $i >= 0; $i--) {
-        $grafikLabel[] = date('d M', strtotime("-$i days"));
-        $grafikData[]  = 0;
-    }
 }
 ?>
 <!doctype html>
 <html lang="id">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Dashboard SIM Klinik Gigi</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        *{box-sizing:border-box;font-family:Inter,Arial,sans-serif}
-        body{margin:0;background:#f4f7fb;color:#0f172a}
-        .page{max-width:1450px;margin:0 auto;padding:22px}
-        .topbar{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:22px}
-        .brand{display:flex;align-items:center;gap:12px}
-        .brand-badge{
-            width:46px;height:46px;border-radius:16px;
-            background:linear-gradient(135deg,#2563eb,#60a5fa);
-            display:flex;align-items:center;justify-content:center;
-            color:#fff;font-size:22px;font-weight:800
-        }
-        .brand h1{margin:0;font-size:24px}
-        .brand p{margin:4px 0 0;color:#64748b}
-        .nav{display:flex;gap:10px;flex-wrap:wrap}
-        .nav a{
-            text-decoration:none;color:#334155;background:#fff;border:1px solid #d9e3ef;
-            padding:12px 18px;border-radius:14px;font-weight:700;
-            box-shadow:0 8px 22px rgba(15,23,42,.04)
-        }
-        .nav a.active{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard Premium</title>
+<style>
+*{box-sizing:border-box;font-family:Inter,Arial,Helvetica,sans-serif}
+body{
+    margin:0;
+    background:
+        radial-gradient(circle at top left, #dbeafe 0%, transparent 28%),
+        radial-gradient(circle at top right, #e9d5ff 0%, transparent 24%),
+        linear-gradient(180deg,#f8fbff 0%,#eef4fb 100%);
+    color:#0f172a;
+}
+.layout{
+    max-width:1440px;
+    margin:0 auto;
+    padding:24px;
+}
+.topbar{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:18px;
+    flex-wrap:wrap;
+    margin-bottom:22px;
+}
+.brand-card{
+    flex:1;
+    min-width:300px;
+    background:linear-gradient(135deg,#0f172a 0%,#1d4ed8 100%);
+    color:#fff;
+    border-radius:28px;
+    padding:28px;
+    box-shadow:0 20px 40px rgba(15,23,42,.15);
+}
+.brand-card h1{
+    margin:0 0 10px;
+    font-size:34px;
+    line-height:1.15;
+}
+.brand-card p{
+    margin:0;
+    font-size:15px;
+    opacity:.92;
+    line-height:1.7;
+}
+.top-actions{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+}
+.btn{
+    display:inline-block;
+    text-decoration:none;
+    background:#0f172a;
+    color:#fff;
+    padding:12px 16px;
+    border-radius:14px;
+    font-weight:700;
+    box-shadow:0 8px 18px rgba(15,23,42,.08);
+}
+.btn.secondary{
+    background:#475569;
+}
+.btn.light{
+    background:#fff;
+    color:#111827;
+}
 
-        .grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin-bottom:18px}
-        .grid2{display:grid;grid-template-columns:1.45fr 1fr;gap:18px}
+.stats-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:18px;
+    margin-bottom:22px;
+}
+.stat-card{
+    background:#fff;
+    border-radius:22px;
+    padding:22px;
+    box-shadow:0 12px 28px rgba(15,23,42,.08);
+    border:1px solid rgba(255,255,255,.7);
+}
+.stat-label{
+    font-size:13px;
+    color:#64748b;
+    margin-bottom:8px;
+}
+.stat-value{
+    font-size:34px;
+    font-weight:800;
+    color:#111827;
+}
+.stat-sub{
+    margin-top:6px;
+    font-size:13px;
+    color:#94a3b8;
+}
 
-        .card{
-            background:#fff;border:1px solid #e2e8f0;border-radius:26px;padding:22px;
-            box-shadow:0 14px 30px rgba(15,23,42,.06)
-        }
+.quick-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:18px;
+    margin-bottom:22px;
+}
+.quick-card{
+    text-decoration:none;
+    background:#fff;
+    color:#0f172a;
+    border-radius:22px;
+    padding:22px;
+    box-shadow:0 12px 28px rgba(15,23,42,.08);
+    transition:.2s ease;
+    border:1px solid #e2e8f0;
+}
+.quick-card:hover{
+    transform:translateY(-3px);
+    box-shadow:0 20px 36px rgba(15,23,42,.12);
+}
+.quick-card .icon{
+    width:52px;
+    height:52px;
+    border-radius:16px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:24px;
+    margin-bottom:14px;
+    background:#eff6ff;
+}
+.quick-card h3{
+    margin:0 0 8px;
+    font-size:18px;
+}
+.quick-card p{
+    margin:0;
+    color:#64748b;
+    font-size:14px;
+    line-height:1.6;
+}
 
-        .stat{position:relative;overflow:hidden;min-height:150px}
-        .stat h3{margin:0 0 20px;font-size:14px;color:#334155}
-        .stat .num{font-size:28px;font-weight:800;margin-bottom:8px}
-        .stat .caption{color:#475569;font-size:14px}
-        .stat .icon{position:absolute;right:18px;top:16px;font-size:24px;opacity:.85}
+.content-grid{
+    display:grid;
+    grid-template-columns:1.15fr .85fr;
+    gap:18px;
+}
+.panel{
+    background:#fff;
+    border-radius:22px;
+    padding:22px;
+    box-shadow:0 12px 28px rgba(15,23,42,.08);
+}
+.panel h2{
+    margin:0 0 14px;
+    font-size:20px;
+}
+.table-wrap{overflow:auto}
+.table{
+    width:100%;
+    border-collapse:collapse;
+}
+.table th,.table td{
+    padding:12px 10px;
+    border-bottom:1px solid #e2e8f0;
+    text-align:left;
+    vertical-align:top;
+    font-size:14px;
+}
+.table th{
+    color:#64748b;
+    font-size:13px;
+    background:#f8fafc;
+}
+.badge{
+    display:inline-block;
+    padding:6px 10px;
+    border-radius:999px;
+    font-size:12px;
+    background:#e2e8f0;
+}
+.badge.lunas{background:#dcfce7;color:#166534}
+.badge.pending{background:#fef3c7;color:#92400e}
+.badge.belum{background:#fee2e2;color:#991b1b}
+.muted{
+    color:#64748b;
+    font-size:13px;
+}
+.footer-note{
+    margin-top:18px;
+    color:#64748b;
+    font-size:13px;
+}
 
-        .blue{background:linear-gradient(135deg,#dbeafe,#eff6ff)}
-        .yellow{background:linear-gradient(135deg,#fef3c7,#fff7dd)}
-        .rose{background:linear-gradient(135deg,#ffe4e6,#fff1f2)}
-        .green{background:linear-gradient(135deg,#dcfce7,#f0fdf4)}
-
-        .section-title{margin:0 0 16px;font-size:18px}
-        .subcards{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
-        .mini{padding:16px 18px;border-radius:18px;font-weight:700}
-        .mini .small{display:block;color:#64748b;font-size:13px;font-weight:600;margin-bottom:8px}
-        .mini-blue{background:#e0f2fe}
-        .mini-rose{background:#ffe4e6;color:#9f1239}
-
-        .table{width:100%;border-collapse:collapse}
-        .table th,.table td{padding:14px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top;text-align:left}
-        .table th{color:#334155}
-        .muted{color:#64748b}
-        .nowrap{white-space:nowrap}
-        .badge{
-            display:inline-block;padding:7px 12px;border-radius:999px;font-size:12px;font-weight:700
-        }
-        .badge.lunas{background:#dcfce7;color:#166534}
-        .badge.pending{background:#fef3c7;color:#92400e}
-        .badge.belum{background:#fee2e2;color:#991b1b}
-
-        .action-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
-        .btn-primary{
-            display:inline-block;text-decoration:none;background:#3f8b5f;color:#fff;
-            padding:16px 26px;border-radius:18px;font-weight:800
-        }
-        .link-more{text-decoration:none;color:#35548b;font-weight:700}
-
-        @media (max-width:1200px){
-            .grid4{grid-template-columns:repeat(2,minmax(0,1fr))}
-            .grid2{grid-template-columns:1fr}
-        }
-        @media (max-width:700px){
-            .grid4{grid-template-columns:1fr}
-            .subcards{grid-template-columns:1fr}
-            .nav{width:100%}
-            .nav a{flex:1;text-align:center}
-        }
-    </style>
+@media(max-width:1200px){
+    .stats-grid,.quick-grid{grid-template-columns:repeat(2,1fr)}
+    .content-grid{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+    .layout{padding:16px}
+    .stats-grid,.quick-grid{grid-template-columns:1fr}
+    .brand-card h1{font-size:26px}
+    .stat-value{font-size:28px}
+}
+</style>
 </head>
 <body>
-<div class="page">
+<div class="layout">
+
     <div class="topbar">
-        <div class="brand">
-            <div class="brand-badge">🦷</div>
-            <div>
-                <h1>Dashboard SIM Klinik Gigi</h1>
-                <p>Ringkasan pasien, kunjungan, invoice, dan laporan keuangan</p>
-            </div>
+        <div class="brand-card">
+            <h1><?= e(KLINIK_NAMA) ?></h1>
+            <p>
+                Dashboard SIMRS Klinik Gigi berbasis cloud untuk mengelola pasien,
+                kunjungan, odontogram, billing, resume medis, surat sakit, dan laporan keuangan.
+            </p>
+            <p style="margin-top:12px;">
+                Selamat datang, <strong><?= e($userName) ?></strong>
+            </p>
         </div>
-        <div class="nav">
-            <a href="dashboard.php" class="active">Dashboard</a>
-            <a href="pasien.php">Pasien</a>
-            <a href="kunjungan.php">Kunjungan</a>
-            <a href="invoice.php">Invoice</a>
-            <a href="laporan_keuangan.php">Keuangan</a>
+
+        <div class="top-actions">
+            <a class="btn light" href="pasien.php">Data Pasien</a>
+            <a class="btn secondary" href="laporan_keuangan.php">Laporan</a>
+            <a class="btn" href="logout.php">Logout</a>
         </div>
     </div>
 
-    <?php flash_message(); ?>
-
-    <div class="grid4">
-        <div class="card stat blue">
-            <div class="icon">👥</div>
-            <h3>Total Pasien</h3>
-            <div class="num"><?= (int)$totalPasien ?></div>
-            <div class="caption">Data pasien aktif di sistem</div>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Total Pasien</div>
+            <div class="stat-value"><?= number_format($totalPasien, 0, ',', '.') ?></div>
+            <div class="stat-sub">Seluruh data pasien aktif</div>
         </div>
 
-        <div class="card stat yellow">
+        <div class="stat-card">
+            <div class="stat-label">Kunjungan Hari Ini</div>
+            <div class="stat-value"><?= number_format($totalKunjunganHariIni, 0, ',', '.') ?></div>
+            <div class="stat-sub">Jumlah kunjungan pada hari ini</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Invoice Hari Ini</div>
+            <div class="stat-value"><?= number_format($totalInvoiceHariIni, 0, ',', '.') ?></div>
+            <div class="stat-sub">Jumlah invoice yang dibuat hari ini</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-label">Pemasukan Hari Ini</div>
+            <div class="stat-value"><?= rupiah($totalPemasukanHariIni) ?></div>
+            <div class="stat-sub">Dari invoice status lunas</div>
+        </div>
+    </div>
+
+    <div class="quick-grid">
+        <a class="quick-card" href="pasien.php">
+            <div class="icon">👤</div>
+            <h3>Data Pasien</h3>
+            <p>Registrasi, edit, pencarian, dan histori lengkap pasien.</p>
+        </a>
+
+        <a class="quick-card" href="kunjungan.php">
             <div class="icon">🩺</div>
-            <h3>Kunjungan Bulan Ini</h3>
-            <div class="num"><?= (int)$totalKunjungan ?></div>
-            <div class="caption">Jumlah kunjungan pada periode berjalan</div>
-        </div>
+            <h3>Kunjungan</h3>
+            <p>Keluhan, diagnosa, ICD-10, dokter, tindakan, dan catatan medis.</p>
+        </a>
 
-        <div class="card stat rose">
-            <div class="icon">🧾</div>
-            <h3>Invoice Belum Lunas</h3>
-            <div class="num"><?= e(rupiah($totalBelumLunas)) ?></div>
-            <div class="caption">Total outstanding billing pasien</div>
-        </div>
+        <a class="quick-card" href="invoice.php">
+            <div class="icon">💳</div>
+            <h3>Billing & Invoice</h3>
+            <p>Tambah item, tarik dari odontogram, QRIS, diskon, dan status bayar.</p>
+        </a>
 
-        <div class="card stat green">
-            <div class="icon">💰</div>
-            <h3>Pendapatan Bulan Ini</h3>
-            <div class="num"><?= e(rupiah($totalPendapatan)) ?></div>
-            <div class="caption">Masuk dari tabel keuangan</div>
-        </div>
+        <a class="quick-card" href="laporan_keuangan.php">
+            <div class="icon">📊</div>
+            <h3>Laporan Keuangan</h3>
+            <p>Rekap pemasukan, metode bayar, dan status invoice.</p>
+        </a>
+
+        <a class="quick-card" href="odontogram.php">
+            <div class="icon">🦷</div>
+            <h3>Odontogram Pro</h3>
+            <p>Input tindakan per gigi, surface, harga, qty, dan integrasi billing.</p>
+        </a>
+
+        <a class="quick-card" href="resume_medis.php?kunjungan_id=1">
+            <div class="icon">📄</div>
+            <h3>Resume Medis</h3>
+            <p>Resume kunjungan, terapi, instruksi, dan print profesional.</p>
+        </a>
+
+        <a class="quick-card" href="surat_sakit.php?kunjungan_id=1">
+            <div class="icon">📝</div>
+            <h3>Surat Sakit</h3>
+            <p>Surat sakit otomatis dari kunjungan dan siap cetak.</p>
+        </a>
+
+        <a class="quick-card" href="pasien_history.php?pasien_id=1">
+            <div class="icon">📚</div>
+            <h3>Riwayat Pasien</h3>
+            <p>Riwayat kunjungan, odontogram, invoice, dan dokumen medis.</p>
+        </a>
     </div>
 
-    <div class="grid2">
-        <div class="card">
-            <h3 class="section-title">Grafik Pemasukan</h3>
-            <canvas id="incomeChart" height="120"></canvas>
-
-            <div class="subcards">
-                <div class="mini mini-blue">
-                    <span class="small">Total invoice</span>
-                    <div style="font-size:20px;"><?= (int)$totalInvoice ?></div>
-                </div>
-                <div class="mini mini-rose">
-                    <span class="small">Belum lunas</span>
-                    <div style="font-size:20px;"><?= e(rupiah($totalBelumLunas)) ?></div>
-                </div>
-            </div>
-
-            <div class="action-row">
-                <a class="btn-primary" href="invoice.php">Buat Invoice Baru</a>
-                <a class="link-more" href="laporan_keuangan.php">Lihat laporan keuangan ›</a>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3 class="section-title">Invoice Terakhir</h3>
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>No Invoice</th>
-                        <th>Pasien</th>
-                        <th>Total</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if ($invoiceTerakhir): ?>
-                        <?php foreach ($invoiceTerakhir as $inv): ?>
-                            <?php
-                            $st = strtolower((string)($inv['status_bayar'] ?? ''));
-                            $cls = $st === 'lunas' ? 'lunas' : ($st === 'pending' ? 'pending' : 'belum');
-                            ?>
+    <div class="content-grid">
+        <div class="panel">
+            <h2>Kunjungan Terbaru</h2>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Tanggal</th>
+                            <th>Pasien</th>
+                            <th>Diagnosa</th>
+                            <th>Tindakan</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($kunjunganTerbaru as $k): ?>
                             <tr>
-                                <td class="nowrap"><?= e($inv['no_invoice'] ?? '-') ?></td>
-                                <td><?= e($inv['nama'] ?? '-') ?></td>
-                                <td class="nowrap"><?= e(rupiah($inv['total'] ?? 0)) ?></td>
-                                <td><span class="badge <?= e($cls) ?>"><?= e($inv['status_bayar'] ?? '-') ?></span></td>
+                                <td><?= e($k['tanggal'] ?? '-') ?></td>
+                                <td>
+                                    <strong><?= e($k['no_rm'] ?? '') ?></strong><br>
+                                    <?= e($k['nama'] ?? '-') ?>
+                                </td>
+                                <td>
+                                    <span class="muted"><?= e($k['icd10_code'] ?? '') ?></span><br>
+                                    <?= e($k['diagnosa'] ?? '-') ?>
+                                </td>
+                                <td><?= e($k['tindakan'] ?? '-') ?></td>
                             </tr>
                         <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr><td colspan="4" class="muted">Belum ada invoice.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <div class="card" style="margin-top:18px;">
-        <div class="action-row" style="margin-top:0;margin-bottom:10px;">
-            <h3 class="section-title" style="margin:0;">Kunjungan Pasien Terakhir</h3>
-            <a class="link-more" href="kunjungan.php">Lihat semua kunjungan ›</a>
+                        <?php if (!$kunjunganTerbaru): ?>
+                            <tr><td colspan="4">Belum ada data kunjungan.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
         </div>
 
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Tanggal</th>
-                    <th>Pasien</th>
-                    <th>Tindakan / Diagnosa</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if ($kunjunganTerakhir): ?>
-                    <?php foreach ($kunjunganTerakhir as $k): ?>
+        <div class="panel">
+            <h2>Invoice Terbaru</h2>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
                         <tr>
-                            <td class="nowrap"><?= e(date('d M Y', strtotime($k['tanggal'] ?? 'now'))) ?></td>
-                            <td>
-                                <div><?= e($k['no_rm'] ?? '-') ?></div>
-                                <div class="muted"><?= e($k['nama'] ?? '-') ?></div>
-                            </td>
-                            <td><?= e($k['tindakan'] ?? '-') ?></td>
+                            <th>No. Invoice</th>
+                            <th>Pasien</th>
+                            <th>Status</th>
+                            <th>Total</th>
                         </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr><td colspan="3" class="muted">Belum ada data kunjungan.</td></tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($invoiceTerbaru as $i): ?>
+                            <?php
+                            $status = strtolower($i['status_bayar'] ?? '');
+                            $cls = 'belum';
+                            if ($status === 'lunas') $cls = 'lunas';
+                            elseif ($status === 'pending') $cls = 'pending';
+                            ?>
+                            <tr>
+                                <td><?= e($i['no_invoice'] ?? '-') ?></td>
+                                <td><?= e($i['nama'] ?? '-') ?></td>
+                                <td><span class="badge <?= $cls ?>"><?= e($i['status_bayar'] ?? '-') ?></span></td>
+                                <td><?= rupiah($i['total'] ?? 0) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (!$invoiceTerbaru): ?>
+                            <tr><td colspan="4">Belum ada data invoice.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="footer-note">
+                Untuk membuka resume medis, surat sakit, dan riwayat pasien secara tepat,
+                akses sebaiknya dilakukan dari data kunjungan atau data pasien yang sudah dipilih.
+            </div>
+        </div>
     </div>
+
 </div>
-
-<script>
-const chartLabels = <?= json_encode($grafikLabel) ?>;
-const chartData   = <?= json_encode($grafikData) ?>;
-
-const ctx = document.getElementById('incomeChart');
-new Chart(ctx, {
-    type: 'line',
-    data: {
-        labels: chartLabels,
-        datasets: [{
-            label: 'Pemasukan',
-            data: chartData,
-            borderColor: '#3b82f6',
-            backgroundColor: 'rgba(59,130,246,0.12)',
-            tension: 0.35,
-            fill: true,
-            pointRadius: 4,
-            pointHoverRadius: 5
-        }]
-    },
-    options: {
-        responsive: true,
-        plugins: {
-            legend: { display: false }
-        },
-        scales: {
-            y: {
-                beginAtZero: true,
-                ticks: {
-                    callback: function(value) {
-                        return 'Rp ' + Number(value).toLocaleString('id-ID');
-                    }
-                }
-            }
-        }
-    }
-});
-</script>
 </body>
 </html>
