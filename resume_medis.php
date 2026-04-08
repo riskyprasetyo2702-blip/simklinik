@@ -7,6 +7,10 @@ if (!$conn) {
     die('Koneksi database tidak tersedia.');
 }
 
+if (!table_exists($conn, 'resume_medis')) {
+    die('Tabel resume_medis tidak ditemukan.');
+}
+
 $kunjungan_id = (int)($_GET['kunjungan_id'] ?? $_POST['kunjungan_id'] ?? 0);
 
 if ($kunjungan_id <= 0) {
@@ -26,6 +30,11 @@ if (!$kunjungan) {
 
 $pasien_id = (int)$kunjungan['pasien_id'];
 
+/*
+|--------------------------------------------------------------------------
+| Simpan / update
+|--------------------------------------------------------------------------
+*/
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $keluhan_utama = trim($_POST['keluhan_utama'] ?? '');
     $pemeriksaan   = trim($_POST['pemeriksaan'] ?? '');
@@ -103,12 +112,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $data = db_fetch_one("SELECT * FROM resume_medis WHERE kunjungan_id = ?", [$kunjungan_id]);
 
-function hitung_umur($tanggal_lahir) {
+function hitung_umur($tanggal_lahir)
+{
     if (!$tanggal_lahir) return '-';
     try {
-        $birth = new DateTime($tanggal_lahir);
-        $today = new DateTime();
-        return $today->diff($birth)->y . ' tahun';
+        $lahir = new DateTime($tanggal_lahir);
+        $hariIni = new DateTime();
+        return $hariIni->diff($lahir)->y . ' tahun';
     } catch (Throwable $e) {
         return '-';
     }
@@ -143,6 +153,7 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
 </head>
 <body>
 <div class="wrap">
+
     <div class="row no-print" style="margin-bottom:16px">
         <div>
             <h1 style="margin:0">Resume Medis</h1>
@@ -156,50 +167,62 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
 
     <div class="card no-print">
         <?php flash_message(); ?>
+
         <form method="post">
             <input type="hidden" name="kunjungan_id" value="<?= (int)$kunjungan_id ?>">
+
             <div class="grid">
                 <div>
                     <label>Keluhan Utama</label>
                     <textarea name="keluhan_utama" rows="3"><?= e($data['keluhan_utama'] ?? $kunjungan['keluhan'] ?? '') ?></textarea>
                 </div>
+
                 <div>
                     <label>Pemeriksaan</label>
                     <textarea name="pemeriksaan" rows="3"><?= e($data['pemeriksaan'] ?? '') ?></textarea>
                 </div>
+
                 <div>
                     <label>Diagnosa</label>
                     <input type="text" name="diagnosa" value="<?= e($data['diagnosa'] ?? $kunjungan['diagnosa'] ?? '') ?>">
                 </div>
+
                 <div>
                     <label>ICD-10</label>
                     <input type="text" name="icd10_code" value="<?= e($data['icd10_code'] ?? $kunjungan['icd10_code'] ?? '') ?>">
                 </div>
+
                 <div>
                     <label>Tindakan</label>
                     <textarea name="tindakan" rows="3"><?= e($data['tindakan'] ?? $kunjungan['tindakan'] ?? '') ?></textarea>
                 </div>
+
                 <div>
                     <label>Terapi</label>
                     <textarea name="terapi" rows="3"><?= e($data['terapi'] ?? '') ?></textarea>
                 </div>
+
                 <div>
                     <label>Instruksi</label>
                     <textarea name="instruksi" rows="3"><?= e($data['instruksi'] ?? '') ?></textarea>
                 </div>
+
                 <div>
                     <label>Catatan</label>
                     <textarea name="catatan" rows="3"><?= e($data['catatan'] ?? $kunjungan['catatan'] ?? '') ?></textarea>
                 </div>
+
                 <div>
                     <label>Nama Dokter</label>
-                    <input type="text" name="dokter_nama" value="<?= e($data['dokter_nama'] ?? 'drg. Andreas Aryo Risky Prasetyo') ?>">
+                    <input type="text" name="dokter_nama" value="<?= e($data['dokter_nama'] ?? $kunjungan['dokter'] ?? 'drg. Andreas Aryo Risky Prasetyo') ?>">
                 </div>
+
                 <div>
                     <label>SIP Dokter</label>
                     <input type="text" name="dokter_sip" value="<?= e($data['dokter_sip'] ?? '') ?>">
                 </div>
             </div>
+
             <div style="margin-top:16px">
                 <button type="submit">Simpan Resume Medis</button>
             </div>
@@ -210,6 +233,7 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
         <h2 style="text-align:center;margin-top:0">RESUME MEDIS</h2>
         <p><strong>Nama Klinik:</strong> <?= e(KLINIK_NAMA) ?></p>
         <hr>
+
         <div class="grid">
             <div><strong>No. RM:</strong> <?= e($kunjungan['no_rm']) ?></div>
             <div><strong>Tanggal Kunjungan:</strong> <?= e($kunjungan['tanggal']) ?></div>
@@ -219,7 +243,9 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
             <div><strong>Umur:</strong> <?= e(hitung_umur($kunjungan['tanggal_lahir'])) ?></div>
             <div class="full"><strong>Alamat:</strong> <?= e($kunjungan['alamat']) ?></div>
         </div>
+
         <hr>
+
         <p><strong>Keluhan Utama:</strong><br><?= nl2br(e($data['keluhan_utama'] ?? $kunjungan['keluhan'] ?? '-')) ?></p>
         <p><strong>Pemeriksaan:</strong><br><?= nl2br(e($data['pemeriksaan'] ?? '-')) ?></p>
         <p><strong>Diagnosa:</strong><br><?= nl2br(e($data['diagnosa'] ?? $kunjungan['diagnosa'] ?? '-')) ?></p>
@@ -232,10 +258,11 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
         <div style="margin-top:40px;text-align:right">
             <div><?= date('d-m-Y') ?></div>
             <br><br><br>
-            <strong><?= e($data['dokter_nama'] ?? 'drg. Andreas Aryo Risky Prasetyo') ?></strong><br>
+            <strong><?= e($data['dokter_nama'] ?? $kunjungan['dokter'] ?? 'drg. Andreas Aryo Risky Prasetyo') ?></strong><br>
             <span><?= e($data['dokter_sip'] ?? '') ?></span>
         </div>
     </div>
+
 </div>
 </body>
 </html>
