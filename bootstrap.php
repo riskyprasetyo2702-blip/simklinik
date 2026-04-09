@@ -10,7 +10,7 @@ mysqli_report(MYSQLI_REPORT_OFF);
 require_once __DIR__ . '/config.php';
 
 if (!defined('KLINIK_NAMA')) define('KLINIK_NAMA', 'Klinik Praktek Mandiri Dokter Gigi Andreas Aryo Risky Prasetyo');
-if (!defined('KLINIK_ALAMAT')) define('KLINIK_ALAMAT', 'Jalan Bukit Nusa Indah 77');
+if (!defined('KLINIK_ALAMAT')) define('KLINIK_ALAMAT', 'Jln. Illago Boulevard Ruko Mendrisio blok e16-17');
 if (!defined('KLINIK_TELP')) define('KLINIK_TELP', '0811-118-17-18');
 
 function db(): ?mysqli
