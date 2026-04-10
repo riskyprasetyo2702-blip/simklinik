@@ -11,6 +11,10 @@ if (!$conn) {
     die('Koneksi database gagal.');
 }
 
+if (!table_exists($conn, 'users')) {
+    die('Tabel users tidak ditemukan.');
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $aksi = $_POST['aksi'] ?? '';
 
@@ -20,29 +24,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = trim($_POST['password'] ?? '');
         $role = trim($_POST['role'] ?? 'dokter');
 
-        if ($username !== '' && $password !== '') {
-            $cek = db_fetch_one("SELECT id FROM users WHERE username = ?", [$username]);
-            if ($cek) {
-                $_SESSION['error'] = 'Username sudah dipakai.';
-            } else {
-                $hash = password_hash($password, PASSWORD_DEFAULT);
-
-                if (column_exists($conn, 'users', 'nama_lengkap')) {
-                    db_run(
-                        "INSERT INTO users (nama_lengkap, username, password, role) VALUES (?, ?, ?, ?)",
-                        [$nama_lengkap, $username, $hash, $role]
-                    );
-                } else {
-                    db_run(
-                        "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                        [$username, $hash, $role]
-                    );
-                }
-
-                $_SESSION['success'] = 'User berhasil ditambahkan.';
-            }
-        } else {
+        if ($username === '' || $password === '') {
             $_SESSION['error'] = 'Username dan password wajib diisi.';
+            header('Location: admin_users.php');
+            exit;
+        }
+
+        $cek = db_fetch_one("SELECT id FROM users WHERE username = ?", [$username]);
+        if ($cek) {
+            $_SESSION['error'] = 'Username sudah dipakai.';
+            header('Location: admin_users.php');
+            exit;
+        }
+
+        $hash = password_hash($password, PASSWORD_DEFAULT);
+
+        $cols = [];
+        $holders = [];
+        $params = [];
+
+        if (column_exists($conn, 'users', 'nama_lengkap')) {
+            $cols[] = 'nama_lengkap';
+            $holders[] = '?';
+            $params[] = $nama_lengkap;
+        }
+
+        if (column_exists($conn, 'users', 'nama')) {
+            $cols[] = 'nama';
+            $holders[] = '?';
+            $params[] = ($nama_lengkap !== '' ? $nama_lengkap : $username);
+        }
+
+        $cols[] = 'username';
+        $holders[] = '?';
+        $params[] = $username;
+
+        $cols[] = 'password';
+        $holders[] = '?';
+        $params[] = $hash;
+
+        if (column_exists($conn, 'users', 'role')) {
+            $cols[] = 'role';
+            $holders[] = '?';
+            $params[] = $role;
+        }
+
+        $sql = "INSERT INTO users (" . implode(', ', $cols) . ") VALUES (" . implode(', ', $holders) . ")";
+        $ok = db_insert($sql, $params);
+
+        if ($ok !== false) {
+            $_SESSION['success'] = 'User berhasil ditambahkan.';
+        } else {
+            $_SESSION['error'] = 'Gagal menyimpan user. Cek struktur tabel users.';
         }
 
         header('Location: admin_users.php');
@@ -53,8 +86,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int)($_POST['id'] ?? 0);
         $role = trim($_POST['role'] ?? 'dokter');
 
-        db_run("UPDATE users SET role = ? WHERE id = ?", [$role, $id]);
-        $_SESSION['success'] = 'Role user berhasil diupdate.';
+        if (!column_exists($conn, 'users', 'role')) {
+            $_SESSION['error'] = 'Kolom role belum ada di tabel users.';
+            header('Location: admin_users.php');
+            exit;
+        }
+
+        $ok = db_run("UPDATE users SET role = ? WHERE id = ?", [$role, $id]);
+        $_SESSION[$ok ? 'success' : 'error'] = $ok ? 'Role user berhasil diupdate.' : 'Gagal update role.';
         header('Location: admin_users.php');
         exit;
     }
@@ -65,12 +104,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($password_baru === '') {
             $_SESSION['error'] = 'Password baru wajib diisi.';
-        } else {
-            $hash = password_hash($password_baru, PASSWORD_DEFAULT);
-            db_run("UPDATE users SET password = ? WHERE id = ?", [$hash, $id]);
-            $_SESSION['success'] = 'Password user berhasil direset.';
+            header('Location: admin_users.php');
+            exit;
         }
 
+        $hash = password_hash($password_baru, PASSWORD_DEFAULT);
+        $ok = db_run("UPDATE users SET password = ? WHERE id = ?", [$hash, $id]);
+
+        $_SESSION[$ok ? 'success' : 'error'] = $ok ? 'Password user berhasil direset.' : 'Gagal reset password.';
         header('Location: admin_users.php');
         exit;
     }
@@ -78,8 +119,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if (isset($_GET['hapus'])) {
     $id = (int)($_GET['hapus'] ?? 0);
-    db_run("DELETE FROM users WHERE id = ?", [$id]);
-    $_SESSION['success'] = 'User berhasil dihapus.';
+
+    // cegah hapus diri sendiri bila perlu
+    if ($id === (int)($_SESSION['user_id'] ?? 0)) {
+        $_SESSION['error'] = 'User yang sedang login tidak bisa dihapus.';
+        header('Location: admin_users.php');
+        exit;
+    }
+
+    $ok = db_run("DELETE FROM users WHERE id = ?", [$id]);
+    $_SESSION[$ok ? 'success' : 'error'] = $ok ? 'User berhasil dihapus.' : 'Gagal menghapus user.';
     header('Location: admin_users.php');
     exit;
 }
@@ -179,11 +228,12 @@ button{background:#0f172a;color:#fff;border:none;cursor:pointer;font-weight:700}
                 <?php foreach ($users as $u): ?>
                 <tr>
                     <td><?= (int)$u['id'] ?></td>
-                    <td><?= e($u['nama_lengkap'] ?? '-') ?></td>
+                    <td><?= e($u['nama_lengkap'] ?? $u['nama'] ?? '-') ?></td>
                     <td><?= e($u['username'] ?? '-') ?></td>
                     <td><span class="badge"><?= e($u['role'] ?? '-') ?></span></td>
                     <td>
                         <div class="action-row">
+                            <?php if (column_exists($conn, 'users', 'role')): ?>
                             <form method="post">
                                 <input type="hidden" name="aksi" value="update_role">
                                 <input type="hidden" name="id" value="<?= (int)$u['id'] ?>">
@@ -193,6 +243,7 @@ button{background:#0f172a;color:#fff;border:none;cursor:pointer;font-weight:700}
                                 </select>
                                 <button type="submit" style="margin-top:8px;">Update Role</button>
                             </form>
+                            <?php endif; ?>
 
                             <form method="post">
                                 <input type="hidden" name="aksi" value="reset_password">
