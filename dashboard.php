@@ -297,19 +297,18 @@ body{
             </p>
         </div>
 
-        <div class="top-actions">
-            <a class="btn light" href="pasien.php">Data Pasien</a>
-            <a class="btn secondary" href="laporan_keuangan.php">Laporan</a>
-            <?php if (($_SESSION['user_role'] ?? '') === 'admin'): ?>
-                <a class="btn" href="admin_panel.php">⚙️ Admin Panel</a>
-            <?php endif; ?>
-            <a href="settings_klinik.php" 
-               style="padding:10px 15px;background:#0f172a;color:white;border-radius:10px;text-decoration:none;">
-                ⚙️ Settings Klinik
-            </a>
-        </div>
-            <a class="btn" href="logout.php">Logout</a>
-        </div>
+     <div class="top-actions">
+        <a class="btn light" href="pasien.php">Data Pasien</a>
+        <a class="btn secondary" href="laporan_keuangan.php">Laporan</a>
+
+        <?php if (($_SESSION['user_role'] ?? '') === 'admin'): ?>
+            <a class="btn" href="admin_panel.php">⚙️ Admin Panel</a>
+        <?php endif; ?>
+
+        <a class="btn" href="settings_klinik.php">⚙️ Settings Klinik</a>
+        <a class="btn" href="logout.php">Logout</a>
+    </div>
+       
     </div>
 
     <div class="stats-grid">
