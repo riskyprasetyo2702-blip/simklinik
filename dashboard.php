@@ -301,7 +301,7 @@ body{
         <a class="btn light" href="pasien.php">Data Pasien</a>
         <a class="btn secondary" href="laporan_keuangan.php">Laporan</a>
 
-        <?php if (($_SESSION['user_role'] ?? '') === 'admin'): ?>
+        <?php if (($_SESSION['role'] ?? '') === 'admin'): ?>
             <a class="btn" href="admin_panel.php">⚙️ Admin Panel</a>
         <?php endif; ?>
 
