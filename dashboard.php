@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
+ensure_logged_in();
 
 $conn = db();
 if (!$conn) {
@@ -354,12 +355,13 @@ body{
             <h3>Billing & Invoice</h3>
             <p>Tambah item, tarik dari odontogram, QRIS, diskon, dan status bayar.</p>
         </a>
-
+        <?php if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin'): ?>
         <a class="quick-card" href="laporan_keuangan.php">
             <div class="icon">📊</div>
             <h3>Laporan Keuangan</h3>
-            <p>Rekap pemasukan, metode bayar, dan status invoice.</p>
+            <p>Rekap pemasukan, metode bayar, dan status invoice.</p>      
         </a>
+        <?php endif; ?>
 
         <a class="quick-card" href="odontogram.php">
             <div class="icon">🦷</div>
