@@ -1,6 +1,5 @@
 <?php
-require_once __DIR__ . '/bootstrap.php';
-ensure_logged_in();
+require_once __DIR__ . '/auth_admin.php';
 
 $conn = db();
 if (!$conn) {
