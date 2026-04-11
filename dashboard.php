@@ -1,10 +1,6 @@
 <?php
 require_once __DIR__ . '/bootstrap.php';
 
-echo 'LOGIN: ' . ($_SESSION['login'] ?? 'tidak ada') . '<br>';
-echo 'ROLE: ' . ($_SESSION['role'] ?? 'tidak ada') . '<br>';
-echo 'USER: ' . ($_SESSION['username'] ?? 'tidak ada');
-
 $conn = db();
 if (!$conn) {
     die('Koneksi database tidak tersedia.');
