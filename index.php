@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['username'] = $user['username'];
                 $_SESSION['nama'] = $user['nama'] ?? $user['username'];
-                $_SESSION['user_role'] = $user['role'] ?? 'dokter';
+                $_SESSION['role'] = $user['role'] ?? 'dokter';
                 
                 header("Location: dashboard.php");
                 exit;
