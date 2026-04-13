@@ -52,7 +52,7 @@ function ensure_logged_in(): void
         !isset($_SESSION['nama']) &&
         !isset($_SESSION['user'])
     ) {
-        header('Location: login.php');
+        header('Location: index.php');
         exit;
     }
 }
