@@ -7,8 +7,8 @@ if (!$conn) {
     die('Koneksi database tidak tersedia.');
 }
 
-if (!table_exists($conn, 'invoice')) {
-    die('Tabel invoice tidak ditemukan.');
+if (!table_exists($conn, 'invoices')) {
+    die('Tabel invoices tidak ditemukan.');
 }
 
 $pasien_id    = (int)($_GET['pasien_id'] ?? 0);
@@ -18,24 +18,100 @@ $edit_id      = (int)($_GET['edit'] ?? 0);
 $invoice = null;
 
 if ($edit_id > 0) {
-    $invoice = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$edit_id]);
+    $invoice = db_fetch_one("SELECT * FROM invoices WHERE id = ?", [$edit_id]);
 }
 
 if (!$invoice && $pasien_id > 0 && $kunjungan_id > 0) {
     $invoice = db_fetch_one(
-        "SELECT * FROM invoice WHERE pasien_id = ? AND kunjungan_id = ? ORDER BY id DESC LIMIT 1",
+        "SELECT * FROM invoices WHERE pasien_id = ? AND kunjungan_id = ? ORDER BY id DESC LIMIT 1",
         [$pasien_id, $kunjungan_id]
     );
 
     if (!$invoice) {
-        $newId = db_insert(
-            "INSERT INTO invoice (no_invoice, pasien_id, kunjungan_id, tanggal, subtotal, diskon, total, status_bayar, metode_bayar, catatan)
-             VALUES (?, ?, ?, NOW(), 0, 0, 0, 'belum terbayar', 'tunai', '')",
-            [next_invoice_no(), $pasien_id, $kunjungan_id]
-        );
+        $insertCols = [];
+        $insertVals = [];
+        $insertParams = [];
+
+        if (column_exists($conn, 'invoices', 'no_invoice')) {
+            $insertCols[] = '`no_invoice`';
+            $insertVals[] = '?';
+            $insertParams[] = next_invoice_no();
+        }
+        if (column_exists($conn, 'invoices', 'pasien_id')) {
+            $insertCols[] = '`pasien_id`';
+            $insertVals[] = '?';
+            $insertParams[] = $pasien_id;
+        }
+        if (column_exists($conn, 'invoices', 'kunjungan_id')) {
+            $insertCols[] = '`kunjungan_id`';
+            $insertVals[] = '?';
+            $insertParams[] = $kunjungan_id;
+        }
+        if (column_exists($conn, 'invoices', 'tanggal')) {
+            $insertCols[] = '`tanggal`';
+            $insertVals[] = 'NOW()';
+        }
+        if (column_exists($conn, 'invoices', 'subtotal')) {
+            $insertCols[] = '`subtotal`';
+            $insertVals[] = '?';
+            $insertParams[] = 0;
+        }
+        if (column_exists($conn, 'invoices', 'diskon')) {
+            $insertCols[] = '`diskon`';
+            $insertVals[] = '?';
+            $insertParams[] = 0;
+        }
+        if (column_exists($conn, 'invoices', 'total')) {
+            $insertCols[] = '`total`';
+            $insertVals[] = '?';
+            $insertParams[] = 0;
+        }
+        if (column_exists($conn, 'invoices', 'status_bayar')) {
+            $insertCols[] = '`status_bayar`';
+            $insertVals[] = '?';
+            $insertParams[] = 'belum terbayar';
+        }
+        if (column_exists($conn, 'invoices', 'metode_bayar')) {
+            $insertCols[] = '`metode_bayar`';
+            $insertVals[] = '?';
+            $insertParams[] = 'tunai';
+        }
+        if (column_exists($conn, 'invoices', 'catatan')) {
+            $insertCols[] = '`catatan`';
+            $insertVals[] = '?';
+            $insertParams[] = '';
+        }
+        if (column_exists($conn, 'invoices', 'tipe_pembayaran')) {
+            $insertCols[] = '`tipe_pembayaran`';
+            $insertVals[] = '?';
+            $insertParams[] = 'tunai';
+        }
+        if (column_exists($conn, 'invoices', 'tenor_bulan')) {
+            $insertCols[] = '`tenor_bulan`';
+            $insertVals[] = '?';
+            $insertParams[] = null;
+        }
+        if (column_exists($conn, 'invoices', 'dp')) {
+            $insertCols[] = '`dp`';
+            $insertVals[] = '?';
+            $insertParams[] = 0;
+        }
+        if (column_exists($conn, 'invoices', 'sisa_tagihan')) {
+            $insertCols[] = '`sisa_tagihan`';
+            $insertVals[] = '?';
+            $insertParams[] = 0;
+        }
+        if (column_exists($conn, 'invoices', 'cicilan_per_bulan')) {
+            $insertCols[] = '`cicilan_per_bulan`';
+            $insertVals[] = '?';
+            $insertParams[] = 0;
+        }
+
+        $sql = "INSERT INTO invoices (" . implode(',', $insertCols) . ") VALUES (" . implode(',', $insertVals) . ")";
+        $newId = db_insert($sql, $insertParams);
 
         if ($newId) {
-            $invoice = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$newId]);
+            $invoice = db_fetch_one("SELECT * FROM invoices WHERE id = ?", [$newId]);
         }
     }
 }
@@ -58,11 +134,6 @@ if ($kunjungan_id > 0 && table_exists($conn, 'kunjungan')) {
     $kunjungan = db_fetch_one("SELECT * FROM kunjungan WHERE id = ?", [$kunjungan_id]);
 }
 
-/*
-|--------------------------------------------------------------------------
-| Auto tarik item odontogram ke invoice_items
-|--------------------------------------------------------------------------
-*/
 if ($invoice_id > 0 && table_exists($conn, 'odontogram_tindakan') && table_exists($conn, 'invoice_items')) {
     $odontoItems = db_fetch_all(
         "SELECT * FROM odontogram_tindakan WHERE kunjungan_id = ? ORDER BY id ASC",
@@ -129,16 +200,11 @@ if ($invoice_id > 0 && table_exists($conn, 'odontogram_tindakan') && table_exist
     }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Hapus item
-|--------------------------------------------------------------------------
-*/
 if (isset($_GET['hapus_item']) && table_exists($conn, 'invoice_items')) {
     $hapusId = (int)$_GET['hapus_item'];
     db_run("DELETE FROM invoice_items WHERE id = ? AND invoice_id = ?", [$hapusId, $invoice_id]);
     $_SESSION['success'] = 'Item invoice dihapus.';
-    header('Location: invoice.php?edit=' . $invoice_id);
+    header('Location: invoices.php?edit=' . $invoice_id);
     exit;
 }
 
@@ -154,16 +220,50 @@ foreach ($items as $it) {
 $diskon = (float)($invoice['diskon'] ?? 0);
 $total = max(0, $subtotal - $diskon);
 
-db_run("UPDATE invoice SET subtotal = ?, total = ? WHERE id = ?", [$subtotal, $total, $invoice_id]);
+$tipePembayaran = (string)($invoice['tipe_pembayaran'] ?? 'tunai');
+$tenorBulan = (int)($invoice['tenor_bulan'] ?? 0);
+$dp = (float)($invoice['dp'] ?? 0);
+$dpEfektif = $tipePembayaran === 'cicilan' ? $dp : $total;
+$sisaTagihan = max(0, $total - $dpEfektif);
+$cicilanPerBulan = ($tipePembayaran === 'cicilan' && $tenorBulan >= 2)
+    ? round($sisaTagihan / $tenorBulan, 2)
+    : 0;
 
-$tindakanList = tindakan_options();
-
-function inv_item_name($row) {
-    return $row['nama_tindakan'] ?? $row['nama_item'] ?? '-';
+$updateCols = [];
+$updateParams = [];
+if (column_exists($conn, 'invoices', 'subtotal')) {
+    $updateCols[] = 'subtotal = ?';
+    $updateParams[] = $subtotal;
+}
+if (column_exists($conn, 'invoices', 'total')) {
+    $updateCols[] = 'total = ?';
+    $updateParams[] = $total;
+}
+if (column_exists($conn, 'invoices', 'sisa_tagihan')) {
+    $updateCols[] = 'sisa_tagihan = ?';
+    $updateParams[] = $sisaTagihan;
+}
+if (column_exists($conn, 'invoices', 'cicilan_per_bulan')) {
+    $updateCols[] = 'cicilan_per_bulan = ?';
+    $updateParams[] = $cicilanPerBulan;
+}
+if ($updateCols) {
+    $updateParams[] = $invoice_id;
+    db_run("UPDATE invoices SET " . implode(', ', $updateCols) . " WHERE id = ?", $updateParams);
+    $invoice = db_fetch_one("SELECT * FROM invoices WHERE id = ?", [$invoice_id]) ?: $invoice;
 }
 
-function inv_item_tooth($row) {
-    return $row['tooth_number'] ?? $row['nomor_gigi'] ?? '';
+$tindakanList = tindakan_options();
+$cicilanRows = table_exists($conn, 'invoice_cicilan')
+    ? db_fetch_all("SELECT * FROM invoice_cicilan WHERE invoice_id = ? ORDER BY angsuran_ke ASC", [$invoice_id])
+    : [];
+
+function inv_item_name(array $row): string {
+    return (string)($row['nama_tindakan'] ?? $row['nama_item'] ?? '-');
+}
+
+function inv_item_tooth(array $row): string {
+    return (string)($row['tooth_number'] ?? $row['nomor_gigi'] ?? '');
 }
 ?>
 <!doctype html>
@@ -171,7 +271,7 @@ function inv_item_tooth($row) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Billing & Invoice</title>
+<title>Billing & Invoices</title>
 <style>
 *{box-sizing:border-box;font-family:Arial,Helvetica,sans-serif}
 body{margin:0;background:#f4f7fb;color:#0f172a}
@@ -180,6 +280,7 @@ body{margin:0;background:#f4f7fb;color:#0f172a}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
 .grid{display:grid;grid-template-columns:1.3fr .7fr .7fr .7fr auto;gap:12px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 input,select,textarea,button{width:100%;padding:12px 14px;border:1px solid #cbd5e1;border-radius:12px}
 button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-block;border:none;font-weight:700;cursor:pointer;padding:12px 16px;border-radius:12px}
 .btn.secondary{background:#475569}
@@ -190,11 +291,13 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
 .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#e2e8f0;font-size:12px}
 .right{text-align:right}
 .small{font-size:13px;color:#64748b}
-.summary{max-width:420px;margin-left:auto}
+.summary{max-width:520px;margin-left:auto}
 .summary table{width:100%;border-collapse:collapse}
 .summary td{padding:10px 8px;border-bottom:1px solid #e2e8f0}
 .summary tr:last-child td{font-size:18px;font-weight:800;border-top:2px solid #111827}
-@media(max-width:1000px){.grid,.grid2{grid-template-columns:1fr}}
+.info-box{padding:14px 16px;border-radius:16px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}
+.hidden{display:none}
+@media(max-width:1000px){.grid,.grid2,.grid3{grid-template-columns:1fr}}
 </style>
 <script>
 function isiMasterTindakan(sel){
@@ -209,6 +312,16 @@ function hitungSubtotal(){
     const harga = parseFloat(document.getElementById('harga').value || 0);
     document.getElementById('subtotal_preview').value = (qty * harga).toFixed(2);
 }
+function toggleCicilan(){
+    const tipe = document.getElementById('tipe_pembayaran');
+    const box = document.getElementById('box_cicilan');
+    if (!tipe || !box) return;
+    box.classList.toggle('hidden', tipe.value !== 'cicilan');
+}
+window.addEventListener('DOMContentLoaded', function(){
+    toggleCicilan();
+    hitungSubtotal();
+});
 </script>
 </head>
 <body>
@@ -216,7 +329,7 @@ function hitungSubtotal(){
 
     <div class="row" style="margin-bottom:16px">
         <div>
-            <h1 style="margin:0">Billing & Invoice</h1>
+            <h1 style="margin:0">Billing & Invoices</h1>
             <div class="small">No. Invoice: <?= e($invoice['no_invoice'] ?? '-') ?></div>
         </div>
         <div class="row">
@@ -225,157 +338,4 @@ function hitungSubtotal(){
         </div>
     </div>
 
-    <div class="card">
-        <?php flash_message(); ?>
-        <div class="grid2">
-            <div>
-                <strong>Pasien</strong><br>
-                <?= e($pasien['no_rm'] ?? '') ?> - <?= e($pasien['nama'] ?? '-') ?>
-            </div>
-            <div>
-                <strong>Kunjungan</strong><br>
-                <?= e($kunjungan['tanggal'] ?? '-') ?>
-            </div>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2 style="margin-top:0">Tambah Item Manual</h2>
-        <form method="post" action="simpan_invoice.php">
-            <input type="hidden" name="invoice_id" value="<?= (int)$invoice_id ?>">
-
-            <div style="margin-bottom:12px">
-                <label>Ambil dari Master Tindakan</label>
-                <select onchange="isiMasterTindakan(this)">
-                    <option value="">Pilih tindakan...</option>
-                    <?php foreach ($tindakanList as $t): ?>
-                        <?php $namaT = $t['nama_tindakan'] ?? $t['nama'] ?? ''; ?>
-                        <option value="<?= (int)($t['id'] ?? 0) ?>"
-                                data-nama="<?= e($namaT) ?>"
-                                data-harga="<?= e((float)($t['harga'] ?? 0)) ?>">
-                            <?= e($namaT) ?><?= !empty($t['kategori']) ? ' - ' . e($t['kategori']) : '' ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-
-            <div class="grid">
-                <div>
-                    <label>Nama Tindakan</label>
-                    <input type="text" id="nama_tindakan" name="nama_tindakan" required>
-                </div>
-                <div>
-                    <label>Qty</label>
-                    <input type="number" step="0.01" id="qty" name="qty" value="1" oninput="hitungSubtotal()">
-                </div>
-                <div>
-                    <label>Harga</label>
-                    <input type="number" step="0.01" id="harga" name="harga" value="0" oninput="hitungSubtotal()">
-                </div>
-                <div>
-                    <label>Preview Subtotal</label>
-                    <input type="number" step="0.01" id="subtotal_preview" readonly value="0">
-                </div>
-                <div style="align-self:end">
-                    <button type="submit" name="tambah_item" value="1">Tambah</button>
-                </div>
-            </div>
-        </form>
-    </div>
-
-    <div class="card">
-        <h2 style="margin-top:0">Item Invoice</h2>
-        <div class="table-wrap">
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th>Tindakan</th>
-                        <th>Gigi</th>
-                        <th>Qty</th>
-                        <th>Harga</th>
-                        <th>Subtotal</th>
-                        <th>Aksi</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach ($items as $it): ?>
-                    <tr>
-                        <td><?= e(inv_item_name($it)) ?></td>
-                        <td><span class="badge"><?= e(inv_item_tooth($it)) ?></span></td>
-                        <td><?= e($it['qty'] ?? 0) ?></td>
-                        <td><?= rupiah($it['harga'] ?? 0) ?></td>
-                        <td><?= rupiah($it['subtotal'] ?? 0) ?></td>
-                        <td>
-                            <a class="btn secondary" style="padding:8px 10px" href="invoice.php?edit=<?= (int)$invoice_id ?>&hapus_item=<?= (int)$it['id'] ?>" onclick="return confirm('Hapus item ini?')">Hapus</a>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                <?php if (!$items): ?>
-                    <tr><td colspan="6">Belum ada item invoice.</td></tr>
-                <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2 style="margin-top:0">Simpan Invoice</h2>
-        <form method="post" action="simpan_invoice.php">
-            <input type="hidden" name="invoice_id" value="<?= (int)$invoice_id ?>">
-
-            <div class="grid2">
-                <div>
-                    <label>Diskon</label>
-                    <input type="number" step="0.01" name="diskon" value="<?= e($diskon) ?>">
-                </div>
-                <div>
-                    <label>Status Bayar</label>
-                    <select name="status_bayar">
-                        <option value="belum terbayar" <?= (($invoice['status_bayar'] ?? '') === 'belum terbayar') ? 'selected' : '' ?>>belum terbayar</option>
-                        <option value="pending" <?= (($invoice['status_bayar'] ?? '') === 'pending') ? 'selected' : '' ?>>pending</option>
-                        <option value="lunas" <?= (($invoice['status_bayar'] ?? '') === 'lunas') ? 'selected' : '' ?>>lunas</option>
-                    </select>
-                </div>
-                <div>
-                    <label>Metode Bayar</label>
-                    <select name="metode_bayar">
-                        <option value="tunai" <?= (($invoice['metode_bayar'] ?? '') === 'tunai') ? 'selected' : '' ?>>tunai</option>
-                        <option value="transfer" <?= (($invoice['metode_bayar'] ?? '') === 'transfer') ? 'selected' : '' ?>>transfer</option>
-                        <option value="debit" <?= (($invoice['metode_bayar'] ?? '') === 'debit') ? 'selected' : '' ?>>debit</option>
-                        <option value="kartu kredit" <?= (($invoice['metode_bayar'] ?? '') === 'kartu kredit') ? 'selected' : '' ?>>kartu kredit</option>
-                        <option value="qris" <?= (($invoice['metode_bayar'] ?? '') === 'qris') ? 'selected' : '' ?>>qris</option>
-                    </select>
-                </div>
-                <div>
-                    <label>Catatan</label>
-                    <textarea name="catatan" rows="3"><?= e($invoice['catatan'] ?? '') ?></textarea>
-                </div>
-            </div>
-
-            <div class="summary" style="margin-top:18px">
-                <table>
-                    <tr>
-                        <td>Subtotal</td>
-                        <td class="right"><?= rupiah($subtotal) ?></td>
-                    </tr>
-                    <tr>
-                        <td>Diskon</td>
-                        <td class="right"><?= rupiah($diskon) ?></td>
-                    </tr>
-                    <tr>
-                        <td>Total</td>
-                        <td class="right"><?= rupiah($total) ?></td>
-                    </tr>
-                </table>
-            </div>
-
-            <div class="row" style="margin-top:18px">
-                <button type="submit" name="simpan_invoice" value="1" style="width:auto">Simpan Invoice</button>
-                <button type="submit" name="selesai_dashboard" value="1" class="btn green" style="width:auto">Selesai & Kembali Dashboard</button>
-            </div>
-        </form>
-    </div>
-
-</div>
-</body>
-</html>
+    <div cl
