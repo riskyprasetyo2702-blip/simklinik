@@ -72,13 +72,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($nama === '') {
             $_SESSION['error'] = 'Nama tindakan wajib diisi.';
-            header('Location: master_tindakan.php');
+            header('Location: tindakan.php');
             exit;
         }
 
         if ($harga < 0) {
             $_SESSION['error'] = 'Harga tidak boleh minus.';
-            header('Location: master_tindakan.php');
+            header('Location: tindakan.php');
             exit;
         }
 
@@ -90,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($cekKode) {
                 $_SESSION['error'] = 'Kode tindakan sudah dipakai.';
-                header('Location: master_tindakan.php' . ($id > 0 ? '?edit=' . $id : ''));
+                header('Location: tindakan.php' . ($id > 0 ? '?edit=' . $id : ''));
                 exit;
             }
         }
@@ -112,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['success'] = 'Tindakan berhasil ditambahkan.';
         }
 
-        header('Location: master_tindakan.php');
+        header('Location: tindakan.php');
         exit;
     }
 
@@ -127,7 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($id <= 0 || $nominal <= 0) {
             $_SESSION['error'] = 'Nominal tambah harga tidak valid.';
-            header('Location: master_tindakan.php');
+            header('Location: tindakan.php');
             exit;
         }
 
@@ -137,7 +137,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         );
 
         $_SESSION['success'] = 'Harga tindakan berhasil ditambah.';
-        header('Location: master_tindakan.php');
+        header('Location: tindakan.php');
         exit;
     }
 
@@ -152,7 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($id <= 0 || $nominal <= 0) {
             $_SESSION['error'] = 'Nominal pengurangan harga tidak valid.';
-            header('Location: master_tindakan.php');
+            header('Location: tindakan.php');
             exit;
         }
 
@@ -160,7 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$item) {
             $_SESSION['error'] = 'Data tindakan tidak ditemukan.';
-            header('Location: master_tindakan.php');
+            header('Location: tindakan.php');
             exit;
         }
 
@@ -172,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         );
 
         $_SESSION['success'] = 'Harga tindakan berhasil dikurangi.';
-        header('Location: master_tindakan.php');
+        header('Location: tindakan.php');
         exit;
     }
 
@@ -192,7 +192,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['error'] = 'Status tindakan tidak valid.';
         }
 
-        header('Location: master_tindakan.php');
+        header('Location: tindakan.php');
         exit;
     }
 }
@@ -212,7 +212,7 @@ if (isset($_GET['hapus'])) {
         $_SESSION['error'] = 'ID tindakan tidak valid.';
     }
 
-    header('Location: master_tindakan.php');
+    header('Location: tindakan.php');
     exit;
 }
 
@@ -266,7 +266,7 @@ $kategoriList = db_fetch_all("
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Master Tindakan</title>
+<title>Tindakan</title>
 <style>
 *{box-sizing:border-box;font-family:Arial,Helvetica,sans-serif}
 body{margin:0;background:#f4f7fb;color:#0f172a}
@@ -416,7 +416,7 @@ label{display:block;margin-bottom:6px;font-weight:700}
             <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;">
                 <button class="btn" type="submit"><?= $edit ? 'Simpan Perubahan' : 'Tambah Tindakan' ?></button>
                 <?php if ($edit): ?>
-                    <a class="btn secondary" href="master_tindakan.php">Batal Edit</a>
+                    <a class="btn secondary" href="tindakan.php">Batal Edit</a>
                 <?php endif; ?>
             </div>
         </form>
