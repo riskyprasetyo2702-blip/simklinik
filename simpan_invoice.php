@@ -157,7 +157,7 @@ if (isset($_POST['simpan_invoice']) || isset($_POST['selesai_dashboard'])) {
     $diskon = max(0, (float)($_POST['diskon'] ?? 0));
     $total = max(0, $subtotal - $diskon);
 
-    $status_bayar = trim($_POST['status_bayar'] ?? 'belum terbayar');
+    $status_bayar = strtolower(trim($_POST['status_bayar'] ?? 'belum terbayar'));
     $metode_bayar = trim($_POST['metode_bayar'] ?? 'tunai');
     $catatan = trim($_POST['catatan'] ?? '');
     $tipe_pembayaran = trim($_POST['tipe_pembayaran'] ?? 'tunai');
@@ -177,7 +177,8 @@ if (isset($_POST['simpan_invoice']) || isset($_POST['selesai_dashboard'])) {
         if ($tenor_bulan < 2) $tenor_bulan = 2;
         if ($tenor_bulan > 12) $tenor_bulan = 12;
         if ($dp > $total) $dp = $total;
-        $status_bayar = $total > 0 && $dp >= $total ? 'lunas' : 'cicilan';
+        $status_bayar = ($total > 0 && $dp >= $total) ? 'lunas' : 'cicilan';
+        $status_bayar = trim(strtolower($status_bayar));
     } else {
         $dp = $total;
         $tenor_bulan = 0;
