@@ -174,14 +174,22 @@ if (isset($_POST['simpan_invoice']) || isset($_POST['selesai_dashboard'])) {
     }
 
     if ($tipe_pembayaran === 'cicilan') {
-        if ($tenor_bulan < 2) $tenor_bulan = 2;
-        if ($tenor_bulan > 12) $tenor_bulan = 12;
-        if ($dp > $total) $dp = $total;
-        $status_bayar = ($total > 0 && $dp >= $total) ? 'lunas' : 'cicilan';
-        $status_bayar = trim(strtolower($status_bayar));
-    } else {
-        $dp = $total;
-        $tenor_bulan = 0;
+    if ($tenor_bulan < 2) $tenor_bulan = 2;
+    if ($tenor_bulan > 12) $tenor_bulan = 12;
+    if ($dp > $total) $dp = $total;
+    $status_bayar = ($total > 0 && $dp >= $total) ? 'lunas' : 'cicilan';
+} else {
+    $dp = $total;
+    $tenor_bulan = 0;
+}
+
+$allowedStatus = ['belum terbayar', 'pending', 'lunas', 'cicilan'];
+$status_bayar = trim(strtolower($status_bayar));
+
+if (!in_array($status_bayar, $allowedStatus, true)) {
+    $status_bayar = 'belum terbayar';
+}
+   
     }
 
     $sisa_tagihan = max(0, $total - $dp);
