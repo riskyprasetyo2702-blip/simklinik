@@ -4,7 +4,6 @@ ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/bootstrap.php';
-ensure_logged_in();require_once __DIR__ . '/bootstrap.php';
 ensure_logged_in();
 
 $conn = db();
@@ -24,21 +23,6 @@ function inv_redirect(int $invoiceId, bool $toDashboard = false): void
         header('Location: invoice.php?edit=' . $invoiceId);
     }
     exit;
-}
-
-function build_types(array $params): string
-{
-    $types = '';
-    foreach ($params as $p) {
-        if (is_int($p)) {
-            $types .= 'i';
-        } elseif (is_float($p)) {
-            $types .= 'd';
-        } else {
-            $types .= 's';
-        }
-    }
-    return $types;
 }
 
 function recalc_invoice_totals(mysqli $conn, int $invoiceId): array
@@ -79,12 +63,18 @@ if (!$invoice) {
     die('Invoice tidak ditemukan.');
 }
 
+/*
+|--------------------------------------------------------------------------
+| Tambah item manual
+|--------------------------------------------------------------------------
+*/
 if (isset($_POST['tambah_item'])) {
     if (!table_exists($conn, 'invoice_items')) {
         $_SESSION['error'] = 'Tabel invoice_items tidak ditemukan.';
         inv_redirect($invoice_id);
     }
 
+    $treatment_id = (int)($_POST['treatment_id'] ?? 0);
     $nama_tindakan = trim($_POST['nama_tindakan'] ?? '');
     $qty = (float)($_POST['qty'] ?? 0);
     $harga = (float)($_POST['harga'] ?? 0);
@@ -104,8 +94,16 @@ if (isset($_POST['tambah_item'])) {
 
     $subtotal = round($qty * $harga, 2);
 
+    // kalau invoice_items wajib treatment_id, paksa pilih master tindakan
+    if (column_exists($conn, 'invoice_items', 'treatment_id') && $treatment_id <= 0) {
+        $_SESSION['error'] = 'Pilih tindakan dari Master Tindakan terlebih dahulu.';
+        inv_redirect($invoice_id);
+    }
+
     $data = [];
     if (column_exists($conn, 'invoice_items', 'invoice_id')) $data['invoice_id'] = $invoice_id;
+    if (column_exists($conn, 'invoice_items', 'treatment_id')) $data['treatment_id'] = $treatment_id;
+    if (column_exists($conn, 'invoice_items', 'tindakan_id')) $data['tindakan_id'] = $treatment_id;
     if (column_exists($conn, 'invoice_items', 'nama_tindakan')) $data['nama_tindakan'] = $nama_tindakan;
     if (column_exists($conn, 'invoice_items', 'nama_item')) $data['nama_item'] = $nama_tindakan;
     if (column_exists($conn, 'invoice_items', 'qty')) $data['qty'] = $qty;
@@ -129,36 +127,32 @@ if (isset($_POST['tambah_item'])) {
         inv_redirect($invoice_id);
     }
 
-    $sql = "INSERT INTO invoice_items (" . implode(',', $cols) . ") VALUES (" . implode(',', $holders) . ")";
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        $_SESSION['error'] = 'Gagal menyiapkan query tambah item.';
-        inv_redirect($invoice_id);
-    }
-
-    $types = build_types($params);
-    if ($params) {
-        $stmt->bind_param($types, ...$params);
-    }
-
-    if (!$stmt->execute()) {
-        $stmt->close();
+    if (db_insert(
+        "INSERT INTO invoice_items (" . implode(',', $cols) . ") VALUES (" . implode(',', $holders) . ")",
+        $params
+    ) === false) {
         $_SESSION['error'] = 'Gagal menambah item invoice.';
         inv_redirect($invoice_id);
     }
-    $stmt->close();
 
     $totals = recalc_invoice_totals($conn, $invoice_id);
-    db_run("UPDATE invoice SET subtotal = ?, total = ? WHERE id = ?", [$totals['subtotal'], $totals['total'], $invoice_id]);
+    db_run(
+        "UPDATE invoice SET subtotal = ?, total = ? WHERE id = ?",
+        [$totals['subtotal'], $totals['total'], $invoice_id]
+    );
 
     $_SESSION['success'] = 'Item invoice berhasil ditambahkan.';
     inv_redirect($invoice_id);
 }
 
+/*
+|--------------------------------------------------------------------------
+| Simpan invoice / cicilan
+|--------------------------------------------------------------------------
+*/
 if (isset($_POST['simpan_invoice']) || isset($_POST['selesai_dashboard'])) {
     $totals = recalc_invoice_totals($conn, $invoice_id);
     $subtotal = (float)$totals['subtotal'];
-    $total = (float)$totals['total'];
 
     $diskon = max(0, (float)($_POST['diskon'] ?? 0));
     $total = max(0, $subtotal - $diskon);
@@ -167,6 +161,7 @@ if (isset($_POST['simpan_invoice']) || isset($_POST['selesai_dashboard'])) {
     $metode_bayar = trim($_POST['metode_bayar'] ?? 'tunai');
     $catatan = trim($_POST['catatan'] ?? '');
     $tipe_pembayaran = trim($_POST['tipe_pembayaran'] ?? 'tunai');
+
     if (!in_array($tipe_pembayaran, ['tunai', 'cicilan'], true)) {
         $tipe_pembayaran = 'tunai';
     }
