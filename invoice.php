@@ -15,6 +15,17 @@ $pasien_id    = (int)($_GET['pasien_id'] ?? 0);
 $kunjungan_id = (int)($_GET['kunjungan_id'] ?? 0);
 $edit_id      = (int)($_GET['edit'] ?? 0);
 
+$hasInvoiceCicilan = table_exists($conn, 'invoice_cicilan');
+$hasTipePembayaran = column_exists($conn, 'invoice', 'tipe_pembayaran');
+$hasTenorBulan     = column_exists($conn, 'invoice', 'tenor_bulan');
+$hasDp             = column_exists($conn, 'invoice', 'dp');
+$hasSisaTagihan    = column_exists($conn, 'invoice', 'sisa_tagihan');
+$hasCicilanBulanan = column_exists($conn, 'invoice', 'cicilan_per_bulan');
+$hasStatusBayar    = column_exists($conn, 'invoice', 'status_bayar');
+$hasMetodeBayar    = column_exists($conn, 'invoice', 'metode_bayar');
+$hasCatatan        = column_exists($conn, 'invoice', 'catatan');
+$hasTanggal        = column_exists($conn, 'invoice', 'tanggal');
+
 $invoice = null;
 
 if ($edit_id > 0) {
@@ -28,10 +39,73 @@ if (!$invoice && $pasien_id > 0 && $kunjungan_id > 0) {
     );
 
     if (!$invoice) {
+        $cols = ['no_invoice', 'pasien_id', 'kunjungan_id'];
+        $vals = ['?', '?', '?'];
+        $params = [next_invoice_no(), $pasien_id, $kunjungan_id];
+
+        if ($hasTanggal) {
+            $cols[] = 'tanggal';
+            $vals[] = 'NOW()';
+        }
+        if (column_exists($conn, 'invoice', 'subtotal')) {
+            $cols[] = 'subtotal';
+            $vals[] = '?';
+            $params[] = 0;
+        }
+        if (column_exists($conn, 'invoice', 'diskon')) {
+            $cols[] = 'diskon';
+            $vals[] = '?';
+            $params[] = 0;
+        }
+        if (column_exists($conn, 'invoice', 'total')) {
+            $cols[] = 'total';
+            $vals[] = '?';
+            $params[] = 0;
+        }
+        if ($hasStatusBayar) {
+            $cols[] = 'status_bayar';
+            $vals[] = '?';
+            $params[] = 'belum terbayar';
+        }
+        if ($hasMetodeBayar) {
+            $cols[] = 'metode_bayar';
+            $vals[] = '?';
+            $params[] = 'tunai';
+        }
+        if ($hasCatatan) {
+            $cols[] = 'catatan';
+            $vals[] = '?';
+            $params[] = '';
+        }
+        if ($hasTipePembayaran) {
+            $cols[] = 'tipe_pembayaran';
+            $vals[] = '?';
+            $params[] = 'tunai';
+        }
+        if ($hasTenorBulan) {
+            $cols[] = 'tenor_bulan';
+            $vals[] = '?';
+            $params[] = null;
+        }
+        if ($hasDp) {
+            $cols[] = 'dp';
+            $vals[] = '?';
+            $params[] = 0;
+        }
+        if ($hasSisaTagihan) {
+            $cols[] = 'sisa_tagihan';
+            $vals[] = '?';
+            $params[] = 0;
+        }
+        if ($hasCicilanBulanan) {
+            $cols[] = 'cicilan_per_bulan';
+            $vals[] = '?';
+            $params[] = 0;
+        }
+
         $newId = db_insert(
-            "INSERT INTO invoice (no_invoice, pasien_id, kunjungan_id, tanggal, subtotal, diskon, total, status_bayar, metode_bayar, catatan)
-             VALUES (?, ?, ?, NOW(), 0, 0, 0, 'belum terbayar', 'tunai', '')",
-            [next_invoice_no(), $pasien_id, $kunjungan_id]
+            "INSERT INTO invoice (" . implode(',', $cols) . ") VALUES (" . implode(',', $vals) . ")",
+            $params
         );
 
         if ($newId) {
@@ -154,9 +228,30 @@ foreach ($items as $it) {
 $diskon = (float)($invoice['diskon'] ?? 0);
 $total = max(0, $subtotal - $diskon);
 
-db_run("UPDATE invoice SET subtotal = ?, total = ? WHERE id = ?", [$subtotal, $total, $invoice_id]);
+$tipePembayaran = (string)($invoice['tipe_pembayaran'] ?? 'tunai');
+$tenorBulan = max(2, (int)($invoice['tenor_bulan'] ?? 2));
+$dp = max(0, (float)($invoice['dp'] ?? 0));
+$dpEfektif = $tipePembayaran === 'cicilan' ? min($dp, $total) : $total;
+$sisaTagihan = max(0, $total - $dpEfektif);
+$cicilanPerBulan = $tipePembayaran === 'cicilan' && $tenorBulan >= 2 ? round($sisaTagihan / $tenorBulan, 2) : 0;
+
+$updateParts = ['subtotal = ?', 'total = ?'];
+$updateParams = [$subtotal, $total];
+if ($hasSisaTagihan) {
+    $updateParts[] = 'sisa_tagihan = ?';
+    $updateParams[] = $sisaTagihan;
+}
+if ($hasCicilanBulanan) {
+    $updateParts[] = 'cicilan_per_bulan = ?';
+    $updateParams[] = $cicilanPerBulan;
+}
+$updateParams[] = $invoice_id;
+db_run("UPDATE invoice SET " . implode(', ', $updateParts) . " WHERE id = ?", $updateParams);
 
 $tindakanList = tindakan_options();
+$cicilanRows = $hasInvoiceCicilan
+    ? db_fetch_all("SELECT * FROM invoice_cicilan WHERE invoice_id = ? ORDER BY angsuran_ke ASC", [$invoice_id])
+    : [];
 
 function inv_item_name($row) {
     return $row['nama_tindakan'] ?? $row['nama_item'] ?? '-';
@@ -180,6 +275,7 @@ body{margin:0;background:#f4f7fb;color:#0f172a}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
 .grid{display:grid;grid-template-columns:1.3fr .7fr .7fr .7fr auto;gap:12px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 input,select,textarea,button{width:100%;padding:12px 14px;border:1px solid #cbd5e1;border-radius:12px}
 button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-block;border:none;font-weight:700;cursor:pointer;padding:12px 16px;border-radius:12px}
 .btn.secondary{background:#475569}
@@ -190,11 +286,13 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
 .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#e2e8f0;font-size:12px}
 .right{text-align:right}
 .small{font-size:13px;color:#64748b}
-.summary{max-width:420px;margin-left:auto}
+.summary{max-width:520px;margin-left:auto}
 .summary table{width:100%;border-collapse:collapse}
 .summary td{padding:10px 8px;border-bottom:1px solid #e2e8f0}
 .summary tr:last-child td{font-size:18px;font-weight:800;border-top:2px solid #111827}
-@media(max-width:1000px){.grid,.grid2{grid-template-columns:1fr}}
+.info-box{padding:14px 16px;border-radius:16px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a}
+.hidden{display:none}
+@media(max-width:1000px){.grid,.grid2,.grid3{grid-template-columns:1fr}}
 </style>
 <script>
 function isiMasterTindakan(sel){
@@ -209,6 +307,35 @@ function hitungSubtotal(){
     const harga = parseFloat(document.getElementById('harga').value || 0);
     document.getElementById('subtotal_preview').value = (qty * harga).toFixed(2);
 }
+function updateSimulasiCicilan(){
+    const total = parseFloat(document.getElementById('summary_total_value').dataset.total || '0');
+    const tipe = document.getElementById('tipe_pembayaran');
+    const dp = parseFloat(document.getElementById('dp')?.value || '0');
+    const tenor = parseInt(document.getElementById('tenor_bulan')?.value || '2', 10);
+    const box = document.getElementById('box_cicilan');
+    const sisaEl = document.getElementById('simulasi_sisa');
+    const bulanEl = document.getElementById('simulasi_bulanan');
+
+    if (!tipe || !box || !sisaEl || !bulanEl) return;
+    const isCicilan = tipe.value === 'cicilan';
+    box.classList.toggle('hidden', !isCicilan);
+
+    let sisa = isCicilan ? Math.max(0, total - Math.max(0, dp)) : 0;
+    let bulanan = isCicilan ? (tenor >= 2 ? sisa / tenor : sisa) : 0;
+
+    sisaEl.textContent = formatRupiah(sisa);
+    bulanEl.textContent = formatRupiah(bulanan);
+}
+function formatRupiah(n){
+    return 'Rp ' + Number(n || 0).toLocaleString('id-ID', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+}
+window.addEventListener('DOMContentLoaded', function(){
+    hitungSubtotal();
+    updateSimulasiCicilan();
+    document.getElementById('tipe_pembayaran')?.addEventListener('change', updateSimulasiCicilan);
+    document.getElementById('dp')?.addEventListener('input', updateSimulasiCicilan);
+    document.getElementById('tenor_bulan')?.addEventListener('input', updateSimulasiCicilan);
+});
 </script>
 </head>
 <body>
@@ -334,6 +461,9 @@ function hitungSubtotal(){
                         <option value="belum terbayar" <?= (($invoice['status_bayar'] ?? '') === 'belum terbayar') ? 'selected' : '' ?>>belum terbayar</option>
                         <option value="pending" <?= (($invoice['status_bayar'] ?? '') === 'pending') ? 'selected' : '' ?>>pending</option>
                         <option value="lunas" <?= (($invoice['status_bayar'] ?? '') === 'lunas') ? 'selected' : '' ?>>lunas</option>
+                        <?php if ($hasTipePembayaran): ?>
+                        <option value="cicilan" <?= (($invoice['status_bayar'] ?? '') === 'cicilan') ? 'selected' : '' ?>>cicilan</option>
+                        <?php endif; ?>
                     </select>
                 </div>
                 <div>
@@ -347,9 +477,39 @@ function hitungSubtotal(){
                     </select>
                 </div>
                 <div>
-                    <label>Catatan</label>
-                    <textarea name="catatan" rows="3"><?= e($invoice['catatan'] ?? '') ?></textarea>
+                    <label>Tipe Pembayaran</label>
+                    <select name="tipe_pembayaran" id="tipe_pembayaran">
+                        <option value="tunai" <?= $tipePembayaran === 'tunai' ? 'selected' : '' ?>>tunai</option>
+                        <option value="cicilan" <?= $tipePembayaran === 'cicilan' ? 'selected' : '' ?>>cicilan</option>
+                    </select>
                 </div>
+            </div>
+
+            <div id="box_cicilan" class="card <?= $tipePembayaran === 'cicilan' ? '' : 'hidden' ?>" style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;box-shadow:none;">
+                <h3 style="margin-top:0">Pengaturan Cicilan</h3>
+                <div class="grid3">
+                    <div>
+                        <label>DP</label>
+                        <input type="number" step="0.01" min="0" id="dp" name="dp" value="<?= e($dp) ?>">
+                    </div>
+                    <div>
+                        <label>Tenor (2 - 12 bulan)</label>
+                        <input type="number" min="2" max="12" id="tenor_bulan" name="tenor_bulan" value="<?= e($tenorBulan) ?>">
+                    </div>
+                    <div>
+                        <label>Tanggal Mulai Cicilan</label>
+                        <input type="date" name="tanggal_mulai_cicilan" value="<?= e(date('Y-m-d', strtotime((string)($invoice['tanggal'] ?? date('Y-m-d'))))) ?>">
+                    </div>
+                </div>
+                <div class="info-box" style="margin-top:16px;">
+                    Estimasi sisa tagihan: <strong id="simulasi_sisa"><?= rupiah($sisaTagihan) ?></strong><br>
+                    Estimasi cicilan per bulan: <strong id="simulasi_bulanan"><?= rupiah($cicilanPerBulan) ?></strong>
+                </div>
+            </div>
+
+            <div style="margin-top:16px">
+                <label>Catatan</label>
+                <textarea name="catatan" rows="3"><?= e($invoice['catatan'] ?? '') ?></textarea>
             </div>
 
             <div class="summary" style="margin-top:18px">
@@ -364,7 +524,19 @@ function hitungSubtotal(){
                     </tr>
                     <tr>
                         <td>Total</td>
-                        <td class="right"><?= rupiah($total) ?></td>
+                        <td class="right" id="summary_total_value" data-total="<?= e($total) ?>"><?= rupiah($total) ?></td>
+                    </tr>
+                    <tr>
+                        <td>DP / Pembayaran Awal</td>
+                        <td class="right"><?= rupiah($dpEfektif) ?></td>
+                    </tr>
+                    <tr>
+                        <td>Sisa Tagihan</td>
+                        <td class="right"><?= rupiah($sisaTagihan) ?></td>
+                    </tr>
+                    <tr>
+                        <td>Cicilan / Bulan</td>
+                        <td class="right"><?= rupiah($cicilanPerBulan) ?></td>
                     </tr>
                 </table>
             </div>
@@ -375,6 +547,38 @@ function hitungSubtotal(){
             </div>
         </form>
     </div>
+
+    <?php if ($cicilanRows): ?>
+    <div class="card">
+        <h2 style="margin-top:0">Jadwal Cicilan</h2>
+        <div class="table-wrap">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>Angsuran</th>
+                        <th>Jatuh Tempo</th>
+                        <th>Nominal</th>
+                        <th>Status</th>
+                        <th>Tanggal Bayar</th>
+                        <th>Metode</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($cicilanRows as $c): ?>
+                    <tr>
+                        <td>#<?= (int)($c['angsuran_ke'] ?? 0) ?></td>
+                        <td><?= e($c['tanggal_jatuh_tempo'] ?? '') ?></td>
+                        <td><?= rupiah($c['nominal'] ?? 0) ?></td>
+                        <td><span class="badge"><?= e($c['status'] ?? 'belum_bayar') ?></span></td>
+                        <td><?= e($c['tanggal_bayar'] ?? '-') ?></td>
+                        <td><?= e($c['metode_bayar'] ?? '-') ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <?php endif; ?>
 
 </div>
 </body>
