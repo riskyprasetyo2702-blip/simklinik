@@ -249,7 +249,7 @@ function tambahTindakanDariMaster(sel){
                         <td class="actions">
                             <a href="kunjungan.php?edit=<?= (int)$k['id'] ?>">Edit</a>
                             <a href="odontogram.php?pasien_id=<?= (int)$k['pasien_id'] ?>&kunjungan_id=<?= (int)$k['id'] ?>">Odontogram</a>
-                            <a href="invoices.php?pasien_id=<?= (int)$k['pasien_id'] ?>&kunjungan_id=<?= (int)$k['id'] ?>">Invoices</a>
+                            <a href="invoice.php?pasien_id=<?= (int)$k['pasien_id'] ?>&kunjungan_id=<?= (int)$k['id'] ?>">Invoice</a>
                             <a href="resume_medis.php?kunjungan_id=<?= (int)$k['id'] ?>">Resume</a>
                             <a href="surat_sakit.php?kunjungan_id=<?= (int)$k['id'] ?>">Surat Sakit</a>
                         </td>
