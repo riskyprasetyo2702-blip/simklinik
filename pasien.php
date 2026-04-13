@@ -183,7 +183,7 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
                         <td class="actions">
                             <a href="pasien.php?edit=<?= (int)$p['id'] ?>">Edit</a>
                             <a href="kunjungan.php?pasien_id=<?= (int)$p['id'] ?>">Kunjungan</a>
-                            <a href="invoice.php?pasien_id=<?= (int)$p['id'] ?>">Invoice</a>
+                            <a href="invoices.php?pasien_id=<?= (int)$p['id'] ?>">Invoices</a>
                             <a href="pasien_history.php?pasien_id=<?= (int)$p['id'] ?>">Riwayat</a>
                         </td>
                     </tr>
