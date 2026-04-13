@@ -298,6 +298,7 @@ button,.btn{background:#0f172a;color:#fff;text-decoration:none;display:inline-bl
 function isiMasterTindakan(sel){
     const opt = sel.options[sel.selectedIndex];
     if (!opt || !opt.value) return;
+    document.getElementById('treatment_id').value = opt.value || 0;
     document.getElementById('nama_tindakan').value = opt.dataset.nama || '';
     document.getElementById('harga').value = opt.dataset.harga || 0;
     hitungSubtotal();
@@ -370,7 +371,7 @@ window.addEventListener('DOMContentLoaded', function(){
         <h2 style="margin-top:0">Tambah Item Manual</h2>
         <form method="post" action="simpan_invoice.php">
             <input type="hidden" name="invoice_id" value="<?= (int)$invoice_id ?>">
-
+            <input type="hidden" name="treatment_id" id="treatment_id" value="0">
             <div style="margin-bottom:12px">
                 <label>Ambil dari Master Tindakan</label>
                 <select onchange="isiMasterTindakan(this)">
