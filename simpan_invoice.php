@@ -4,227 +4,298 @@ ensure_logged_in();
 
 $conn = db();
 if (!$conn) {
-    $_SESSION['error'] = 'Koneksi database tidak tersedia.';
-    header('Location: invoice.php');
-    exit;
-}
-
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    header('Location: invoice.php');
-    exit;
+    die('Koneksi database tidak tersedia.');
 }
 
 if (!table_exists($conn, 'invoice')) {
-    $_SESSION['error'] = 'Tabel invoice tidak ditemukan.';
-    header('Location: invoice.php');
+    die('Tabel invoice tidak ditemukan.');
+}
+
+function inv_redirect(int $invoiceId, bool $toDashboard = false): void
+{
+    if ($toDashboard) {
+        header('Location: dashboard.php');
+    } else {
+        header('Location: invoice.php?edit=' . $invoiceId);
+    }
+    exit;
+}
+
+function build_types(array $params): string
+{
+    $types = '';
+    foreach ($params as $p) {
+        if (is_int($p)) {
+            $types .= 'i';
+        } elseif (is_float($p)) {
+            $types .= 'd';
+        } else {
+            $types .= 's';
+        }
+    }
+    return $types;
+}
+
+function recalc_invoice_totals(mysqli $conn, int $invoiceId): array
+{
+    $items = table_exists($conn, 'invoice_items')
+        ? db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC", [$invoiceId])
+        : [];
+
+    $subtotal = 0.0;
+    foreach ($items as $it) {
+        $subtotal += (float)($it['subtotal'] ?? 0);
+    }
+
+    $invoice = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$invoiceId]);
+    $diskon = (float)($invoice['diskon'] ?? 0);
+    $total = max(0, $subtotal - $diskon);
+
+    return [
+        'invoice' => $invoice,
+        'subtotal' => $subtotal,
+        'diskon' => $diskon,
+        'total' => $total,
+    ];
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('Location: dashboard.php');
     exit;
 }
 
 $invoice_id = (int)($_POST['invoice_id'] ?? 0);
 if ($invoice_id <= 0) {
-    $_SESSION['error'] = 'Invoice tidak valid.';
-    header('Location: invoice.php');
-    exit;
+    die('Invoice tidak valid.');
 }
 
 $invoice = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$invoice_id]);
 if (!$invoice) {
-    $_SESSION['error'] = 'Data invoice tidak ditemukan.';
-    header('Location: invoice.php');
-    exit;
+    die('Invoice tidak ditemukan.');
 }
 
-/*
-|--------------------------------------------------------------------------
-| TAMBAH ITEM MANUAL
-|--------------------------------------------------------------------------
-*/
 if (isset($_POST['tambah_item'])) {
     if (!table_exists($conn, 'invoice_items')) {
         $_SESSION['error'] = 'Tabel invoice_items tidak ditemukan.';
-        header('Location: invoice.php?edit=' . $invoice_id);
-        exit;
+        inv_redirect($invoice_id);
     }
 
     $nama_tindakan = trim($_POST['nama_tindakan'] ?? '');
-    $qty = (float)($_POST['qty'] ?? 1);
+    $qty = (float)($_POST['qty'] ?? 0);
     $harga = (float)($_POST['harga'] ?? 0);
 
     if ($nama_tindakan === '') {
         $_SESSION['error'] = 'Nama tindakan wajib diisi.';
-        header('Location: invoice.php?edit=' . $invoice_id);
-        exit;
+        inv_redirect($invoice_id);
     }
 
-    if ($qty <= 0) $qty = 1;
-    if ($harga < 0) $harga = 0;
+    if ($qty <= 0) {
+        $qty = 1;
+    }
 
-    $subtotal = $qty * $harga;
+    if ($harga < 0) {
+        $harga = 0;
+    }
+
+    $subtotal = round($qty * $harga, 2);
 
     $data = [];
     if (column_exists($conn, 'invoice_items', 'invoice_id')) $data['invoice_id'] = $invoice_id;
-    if (column_exists($conn, 'invoice_items', 'treatment_id')) $data['treatment_id'] = 0;
-    if (column_exists($conn, 'invoice_items', 'tindakan_id')) $data['tindakan_id'] = 0;
     if (column_exists($conn, 'invoice_items', 'nama_tindakan')) $data['nama_tindakan'] = $nama_tindakan;
     if (column_exists($conn, 'invoice_items', 'nama_item')) $data['nama_item'] = $nama_tindakan;
     if (column_exists($conn, 'invoice_items', 'qty')) $data['qty'] = $qty;
     if (column_exists($conn, 'invoice_items', 'harga')) $data['harga'] = $harga;
     if (column_exists($conn, 'invoice_items', 'subtotal')) $data['subtotal'] = $subtotal;
-    if (column_exists($conn, 'invoice_items', 'tooth_number')) $data['tooth_number'] = '';
-    if (column_exists($conn, 'invoice_items', 'nomor_gigi')) $data['nomor_gigi'] = '';
-    if (column_exists($conn, 'invoice_items', 'surface_code')) $data['surface_code'] = '';
     if (column_exists($conn, 'invoice_items', 'keterangan')) $data['keterangan'] = 'manual';
     if (column_exists($conn, 'invoice_items', 'sumber')) $data['sumber'] = 'manual';
     if (column_exists($conn, 'invoice_items', 'created_at')) $data['created_at'] = date('Y-m-d H:i:s');
-
-    if (empty($data)) {
-        $_SESSION['error'] = 'Struktur invoice_items tidak sesuai.';
-        header('Location: invoice.php?edit=' . $invoice_id);
-        exit;
-    }
 
     $cols = [];
     $holders = [];
     $params = [];
     foreach ($data as $col => $val) {
         $cols[] = "`$col`";
-        $holders[] = "?";
+        $holders[] = '?';
         $params[] = $val;
+    }
+
+    if (!$cols) {
+        $_SESSION['error'] = 'Struktur invoice_items tidak sesuai.';
+        inv_redirect($invoice_id);
     }
 
     $sql = "INSERT INTO invoice_items (" . implode(',', $cols) . ") VALUES (" . implode(',', $holders) . ")";
     $stmt = $conn->prepare($sql);
-
     if (!$stmt) {
-        $_SESSION['error'] = 'Prepare tambah item gagal: ' . $conn->error;
-        header('Location: invoice.php?edit=' . $invoice_id);
-        exit;
+        $_SESSION['error'] = 'Gagal menyiapkan query tambah item.';
+        inv_redirect($invoice_id);
     }
 
-    $types = '';
-    foreach ($params as $p) {
-        if (is_int($p)) $types .= 'i';
-        elseif (is_float($p)) $types .= 'd';
-        else $types .= 's';
+    $types = build_types($params);
+    if ($params) {
+        $stmt->bind_param($types, ...$params);
     }
 
-    $stmt->bind_param($types, ...$params);
-    $ok = $stmt->execute();
-    $err = $stmt->error;
+    if (!$stmt->execute()) {
+        $stmt->close();
+        $_SESSION['error'] = 'Gagal menambah item invoice.';
+        inv_redirect($invoice_id);
+    }
     $stmt->close();
 
-    if ($ok) {
-        $_SESSION['success'] = 'Item berhasil ditambahkan.';
-    } else {
-        $_SESSION['error'] = 'Gagal tambah item: ' . $err;
-    }
+    $totals = recalc_invoice_totals($conn, $invoice_id);
+    db_run("UPDATE invoice SET subtotal = ?, total = ? WHERE id = ?", [$totals['subtotal'], $totals['total'], $invoice_id]);
 
-    header('Location: invoice.php?edit=' . $invoice_id);
-    exit;
+    $_SESSION['success'] = 'Item invoice berhasil ditambahkan.';
+    inv_redirect($invoice_id);
 }
 
-/*
-|--------------------------------------------------------------------------
-| SIMPAN INVOICE
-|--------------------------------------------------------------------------
-*/
 if (isset($_POST['simpan_invoice']) || isset($_POST['selesai_dashboard'])) {
-    $diskon = (float)($_POST['diskon'] ?? 0);
+    $totals = recalc_invoice_totals($conn, $invoice_id);
+    $subtotal = (float)$totals['subtotal'];
+    $total = (float)$totals['total'];
+
+    $diskon = max(0, (float)($_POST['diskon'] ?? 0));
+    $total = max(0, $subtotal - $diskon);
+
     $status_bayar = trim($_POST['status_bayar'] ?? 'belum terbayar');
     $metode_bayar = trim($_POST['metode_bayar'] ?? 'tunai');
     $catatan = trim($_POST['catatan'] ?? '');
-
-    if ($diskon < 0) $diskon = 0;
-
-    $subtotal = 0;
-    if (table_exists($conn, 'invoice_items')) {
-        $sum = db_fetch_one(
-            "SELECT COALESCE(SUM(subtotal),0) AS total_subtotal FROM invoice_items WHERE invoice_id = ?",
-            [$invoice_id]
-        );
-        $subtotal = (float)($sum['total_subtotal'] ?? 0);
+    $tipe_pembayaran = trim($_POST['tipe_pembayaran'] ?? 'tunai');
+    if (!in_array($tipe_pembayaran, ['tunai', 'cicilan'], true)) {
+        $tipe_pembayaran = 'tunai';
     }
 
-    $total = max(0, $subtotal - $diskon);
-
-    $setParts = [];
-    $params = [];
-
-    if (column_exists($conn, 'invoice', 'subtotal')) {
-        $setParts[] = "`subtotal` = ?";
-        $params[] = $subtotal;
-    }
-    if (column_exists($conn, 'invoice', 'diskon')) {
-        $setParts[] = "`diskon` = ?";
-        $params[] = $diskon;
-    }
-    if (column_exists($conn, 'invoice', 'total')) {
-        $setParts[] = "`total` = ?";
-        $params[] = $total;
-    }
-    if (column_exists($conn, 'invoice', 'status_bayar')) {
-        $setParts[] = "`status_bayar` = ?";
-        $params[] = $status_bayar;
-    }
-    if (column_exists($conn, 'invoice', 'metode_bayar')) {
-        $setParts[] = "`metode_bayar` = ?";
-        $params[] = $metode_bayar;
-    }
-    if (column_exists($conn, 'invoice', 'catatan')) {
-        $setParts[] = "`catatan` = ?";
-        $params[] = $catatan;
-    }
-    if (column_exists($conn, 'invoice', 'updated_at')) {
-        $setParts[] = "`updated_at` = NOW()";
+    $dp = max(0, (float)($_POST['dp'] ?? 0));
+    $tenor_bulan = (int)($_POST['tenor_bulan'] ?? 2);
+    $tanggal_mulai_cicilan = trim($_POST['tanggal_mulai_cicilan'] ?? date('Y-m-d'));
+    if ($tanggal_mulai_cicilan === '') {
+        $tanggal_mulai_cicilan = date('Y-m-d');
     }
 
-    $params[] = $invoice_id;
-
-    $sql = "UPDATE invoice SET " . implode(', ', $setParts) . " WHERE id = ?";
-    $stmt = $conn->prepare($sql);
-
-    if (!$stmt) {
-        $_SESSION['error'] = 'Prepare simpan invoice gagal: ' . $conn->error;
-        header('Location: invoice.php?edit=' . $invoice_id);
-        exit;
+    if ($tipe_pembayaran === 'cicilan') {
+        if ($tenor_bulan < 2) $tenor_bulan = 2;
+        if ($tenor_bulan > 12) $tenor_bulan = 12;
+        if ($dp > $total) $dp = $total;
+        $status_bayar = $total > 0 && $dp >= $total ? 'lunas' : 'cicilan';
+    } else {
+        $dp = $total;
+        $tenor_bulan = 0;
     }
 
-    $types = '';
-    for ($i = 0; $i < count($params) - 1; $i++) {
-        if (is_int($params[$i])) $types .= 'i';
-        elseif (is_float($params[$i])) $types .= 'd';
-        else $types .= 's';
-    }
-    $types .= 'i';
+    $sisa_tagihan = max(0, $total - $dp);
+    $cicilan_per_bulan = ($tipe_pembayaran === 'cicilan' && $tenor_bulan >= 2)
+        ? round($sisa_tagihan / $tenor_bulan, 2)
+        : 0;
 
-    $stmt->bind_param($types, ...$params);
-    $ok = $stmt->execute();
-    $err = $stmt->error;
-    $stmt->close();
+    $conn->begin_transaction();
 
-    if (!$ok) {
-        $_SESSION['error'] = 'Gagal simpan invoice: ' . $err;
-        header('Location: invoice.php?edit=' . $invoice_id);
-        exit;
-    }
-
-    // sinkron ke keuangan
     try {
-        sync_invoice_finance($invoice_id);
+        $parts = [];
+        $params = [];
+
+        if (column_exists($conn, 'invoice', 'subtotal')) {
+            $parts[] = 'subtotal = ?';
+            $params[] = $subtotal;
+        }
+        if (column_exists($conn, 'invoice', 'diskon')) {
+            $parts[] = 'diskon = ?';
+            $params[] = $diskon;
+        }
+        if (column_exists($conn, 'invoice', 'total')) {
+            $parts[] = 'total = ?';
+            $params[] = $total;
+        }
+        if (column_exists($conn, 'invoice', 'status_bayar')) {
+            $parts[] = 'status_bayar = ?';
+            $params[] = $status_bayar;
+        }
+        if (column_exists($conn, 'invoice', 'metode_bayar')) {
+            $parts[] = 'metode_bayar = ?';
+            $params[] = $metode_bayar;
+        }
+        if (column_exists($conn, 'invoice', 'catatan')) {
+            $parts[] = 'catatan = ?';
+            $params[] = $catatan;
+        }
+        if (column_exists($conn, 'invoice', 'tipe_pembayaran')) {
+            $parts[] = 'tipe_pembayaran = ?';
+            $params[] = $tipe_pembayaran;
+        }
+        if (column_exists($conn, 'invoice', 'tenor_bulan')) {
+            $parts[] = 'tenor_bulan = ?';
+            $params[] = $tipe_pembayaran === 'cicilan' ? $tenor_bulan : null;
+        }
+        if (column_exists($conn, 'invoice', 'dp')) {
+            $parts[] = 'dp = ?';
+            $params[] = $dp;
+        }
+        if (column_exists($conn, 'invoice', 'sisa_tagihan')) {
+            $parts[] = 'sisa_tagihan = ?';
+            $params[] = $sisa_tagihan;
+        }
+        if (column_exists($conn, 'invoice', 'cicilan_per_bulan')) {
+            $parts[] = 'cicilan_per_bulan = ?';
+            $params[] = $cicilan_per_bulan;
+        }
+
+        if (!$parts) {
+            throw new RuntimeException('Kolom invoice tidak cukup untuk disimpan.');
+        }
+
+        $params[] = $invoice_id;
+        if (!db_run("UPDATE invoice SET " . implode(', ', $parts) . " WHERE id = ?", $params)) {
+            throw new RuntimeException('Gagal mengupdate invoice.');
+        }
+
+        if (table_exists($conn, 'invoice_cicilan')) {
+            db_run("DELETE FROM invoice_cicilan WHERE invoice_id = ?", [$invoice_id]);
+
+            if ($tipe_pembayaran === 'cicilan' && $sisa_tagihan > 0 && $tenor_bulan >= 2) {
+                $baseNominal = floor(($sisa_tagihan / $tenor_bulan) * 100) / 100;
+                $distributed = 0.0;
+
+                for ($i = 1; $i <= $tenor_bulan; $i++) {
+                    $nominal = ($i < $tenor_bulan)
+                        ? $baseNominal
+                        : round($sisa_tagihan - $distributed, 2);
+                    $distributed += $nominal;
+
+                    $jatuhTempo = date('Y-m-d', strtotime($tanggal_mulai_cicilan . ' +' . ($i - 1) . ' month'));
+
+                    $cols = ['invoice_id', 'angsuran_ke', 'tanggal_jatuh_tempo', 'nominal', 'status'];
+                    $vals = ['?', '?', '?', '?', '?'];
+                    $rowParams = [$invoice_id, $i, $jatuhTempo, $nominal, 'belum_bayar'];
+
+                    if (column_exists($conn, 'invoice_cicilan', 'created_at')) {
+                        $cols[] = 'created_at';
+                        $vals[] = '?';
+                        $rowParams[] = date('Y-m-d H:i:s');
+                    }
+
+                    if (db_insert(
+                        "INSERT INTO invoice_cicilan (" . implode(',', $cols) . ") VALUES (" . implode(',', $vals) . ")",
+                        $rowParams
+                    ) === false) {
+                        throw new RuntimeException('Gagal membuat jadwal cicilan.');
+                    }
+                }
+            }
+        }
+
+        if (function_exists('sync_invoice_finance')) {
+            sync_invoice_finance($invoice_id);
+        }
+
+        $conn->commit();
+        $_SESSION['success'] = 'Invoice berhasil disimpan.';
     } catch (Throwable $e) {
-        // invoice tetap aman
+        $conn->rollback();
+        $_SESSION['error'] = 'Gagal menyimpan invoice: ' . $e->getMessage();
     }
 
-    $_SESSION['success'] = 'Invoice berhasil disimpan.';
-
-    if (isset($_POST['selesai_dashboard'])) {
-        header('Location: dashboard.php');
-        exit;
-    }
-
-    header('Location: invoice.php?edit=' . $invoice_id);
-    exit;
+    inv_redirect($invoice_id, isset($_POST['selesai_dashboard']));
 }
 
-header('Location: invoice.php?edit=' . $invoice_id);
-exit;
+$_SESSION['error'] = 'Aksi tidak dikenali.';
+inv_redirect($invoice_id);
