@@ -2,7 +2,7 @@
 require_once 'bootstrap.php';
 ensure_logged_in();
 
-if (($_SESSION['user_role'] ?? '') !== 'admin') {
+if (($_SESSION['role'] ?? '') !== 'admin') {
     die('Akses ditolak');
 }
 
