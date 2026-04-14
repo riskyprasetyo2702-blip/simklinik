@@ -189,8 +189,6 @@ $status_bayar = trim(strtolower($status_bayar));
 if (!in_array($status_bayar, $allowedStatus, true)) {
     $status_bayar = 'belum terbayar';
 }
-   
-    }
 
     $sisa_tagihan = max(0, $total - $dp);
     $cicilan_per_bulan = ($tipe_pembayaran === 'cicilan' && $tenor_bulan >= 2)
