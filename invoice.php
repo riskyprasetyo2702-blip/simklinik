@@ -247,6 +247,8 @@ if ($hasCicilanBulanan) {
 }
 $updateParams[] = $invoice_id;
 db_run("UPDATE invoice SET " . implode(', ', $updateParts) . " WHERE id = ?", $updateParams);
+/* reload data invoice terbaru */
+$invoice = db_fetch_one("SELECT * FROM invoice WHERE id = ?", [$invoice_id]);
 
 $tindakanList = tindakan_options();
 $cicilanRows = $hasInvoiceCicilan
