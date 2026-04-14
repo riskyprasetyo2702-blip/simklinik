@@ -19,7 +19,9 @@ if (!$invoice) {
 
 $pasien = db_fetch_one("SELECT * FROM pasien WHERE id = ?", [(int)($invoice['pasien_id'] ?? 0)]);
 $kunjungan = db_fetch_one("SELECT * FROM kunjungan WHERE id = ?", [(int)($invoice['kunjungan_id'] ?? 0)]);
-$items = table_exists($conn, 'invoice_items') ? db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC", [$invoice_id]) : [];
+$items = table_exists($conn, 'invoice_items')
+    ? db_fetch_all("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id ASC", [$invoice_id])
+    : [];
 
 $klinik = function_exists('klinik_profile') ? klinik_profile() : [
     'nama_klinik' => KLINIK_NAMA,
@@ -33,6 +35,7 @@ $klinik = function_exists('klinik_profile') ? klinik_profile() : [
 function pdf_item_name($row) {
     return $row['nama_tindakan'] ?? $row['nama_item'] ?? '-';
 }
+
 function pdf_item_tooth($row) {
     return $row['tooth_number'] ?? $row['nomor_gigi'] ?? '';
 }
@@ -41,10 +44,32 @@ $subtotal = 0;
 foreach ($items as $it) {
     $subtotal += (float)($it['subtotal'] ?? 0);
 }
+
 $diskon = (float)($invoice['diskon'] ?? 0);
 $total = (float)($invoice['total'] ?? max(0, $subtotal - $diskon));
 $metode = $invoice['metode_bayar'] ?? 'tunai';
-$status = strtolower($invoice['status_bayar'] ?? 'belum terbayar');
+$status = strtolower(trim((string)($invoice['status_bayar'] ?? 'belum terbayar')));
+
+$tipePembayaran = strtolower(trim((string)($invoice['tipe_pembayaran'] ?? 'tunai')));
+$dp = (float)($invoice['dp'] ?? 0);
+$tenorBulan = (int)($invoice['tenor_bulan'] ?? 0);
+$sisaTagihan = (float)($invoice['sisa_tagihan'] ?? 0);
+$cicilanPerBulan = (float)($invoice['cicilan_per_bulan'] ?? 0);
+
+if ($tipePembayaran !== 'cicilan') {
+    $tipePembayaran = 'tunai';
+    $dp = $total;
+    $tenorBulan = 0;
+    $sisaTagihan = 0;
+    $cicilanPerBulan = 0;
+}
+
+$statusClass = 'belum';
+if ($status === 'lunas') {
+    $statusClass = 'lunas';
+} elseif ($status === 'pending' || $status === 'cicilan') {
+    $statusClass = 'pending';
+}
 ?>
 <!doctype html>
 <html lang="id">
@@ -75,7 +100,7 @@ body{margin:0;background:#eef2f7;color:#111827}
 .table th,.table td{padding:12px 10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:14px}
 .table th{background:#f9fafb;font-size:13px}
 .right{text-align:right}
-.summary{margin-top:18px;margin-left:auto;max-width:380px}
+.summary{margin-top:18px;margin-left:auto;max-width:430px}
 .summary table{width:100%;border-collapse:collapse}
 .summary td{padding:10px 8px;border-bottom:1px solid #e5e7eb}
 .summary tr:last-child td{font-size:18px;font-weight:800;border-top:2px solid #111827}
@@ -127,7 +152,7 @@ body{margin:0;background:#eef2f7;color:#111827}
                     <strong>No:</strong> <?= e($invoice['no_invoice'] ?? '-') ?><br>
                     <strong>Tanggal:</strong> <?= e($invoice['tanggal'] ?? '-') ?><br>
                     <strong>Status:</strong>
-                    <span class="status <?= $status === 'lunas' ? 'lunas' : ($status === 'pending' ? 'pending' : 'belum') ?>">
+                    <span class="status <?= $statusClass ?>">
                         <?= e($invoice['status_bayar'] ?? '-') ?>
                     </span>
                 </div>
@@ -192,6 +217,11 @@ body{margin:0;background:#eef2f7;color:#111827}
                 <tr><td>Subtotal</td><td class="right"><?= rupiah($subtotal) ?></td></tr>
                 <tr><td>Diskon</td><td class="right"><?= rupiah($diskon) ?></td></tr>
                 <tr><td>Total</td><td class="right"><?= rupiah($total) ?></td></tr>
+                <tr><td>Tipe Pembayaran</td><td class="right"><?= strtoupper(e($tipePembayaran)) ?></td></tr>
+                <tr><td>DP / Pembayaran Awal</td><td class="right"><?= rupiah($dp) ?></td></tr>
+                <tr><td>Sisa Tagihan</td><td class="right"><?= rupiah($sisaTagihan) ?></td></tr>
+                <tr><td>Cicilan / Bulan</td><td class="right"><?= rupiah($cicilanPerBulan) ?></td></tr>
+                <tr><td>Tenor</td><td class="right"><?= $tenorBulan > 0 ? e($tenorBulan) . ' bulan' : '-' ?></td></tr>
                 <tr><td>Metode Bayar</td><td class="right"><?= strtoupper(e($metode)) ?></td></tr>
             </table>
         </div>
