@@ -175,9 +175,9 @@ function tambahTindakanDariMaster(sel){
                         <?php foreach ($icd10List as $icd): ?>
                             <option
                                 value="<?= e($icd['kode'] ?? '') ?>"
-                                data-nama="<?= e($icd['diagnosis'] ?? '') ?>"
+                                data-nama="<?= e($icd['nama'] ?? '') ?>"
                                 <?= (($editData['icd10_code'] ?? '') === ($icd['kode'] ?? '')) ? 'selected' : '' ?>>
-                                <?= e($icd['kode'] ?? '') ?> - <?= e($icd['diagnosis'] ?? '') ?>
+                                <?= e($icd['kode'] ?? '') ?> - <?= e($icd['nama'] ?? '') ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
