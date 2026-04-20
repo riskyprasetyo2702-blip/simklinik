@@ -5,6 +5,28 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+/*
+|--------------------------------------------------------------------------
+| Auto logout jika idle > 1 jam
+|--------------------------------------------------------------------------
+*/
+$timeout_seconds = 3600; // 1 jam
+
+if (isset($_SESSION['LAST_ACTIVITY'])) {
+    if (time() - $_SESSION['LAST_ACTIVITY'] > $timeout_seconds) {
+        session_unset();
+        session_destroy();
+
+        session_start();
+        $_SESSION['error'] = 'Session berakhir karena tidak ada aktivitas selama 1 jam.';
+
+        header('Location: index.php');
+        exit;
+    }
+}
+
+$_SESSION['LAST_ACTIVITY'] = time();
+?>
 mysqli_report(MYSQLI_REPORT_OFF);
 
 require_once __DIR__ . '/config.php';
