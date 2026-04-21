@@ -13,7 +13,7 @@ if (session_status() === PHP_SESSION_NONE) {
 $timeout_seconds = 3600; // 1 jam
 
 if (isset($_SESSION['LAST_ACTIVITY'])) {
-    if (time() - $_SESSION['LAST_ACTIVITY'] > $timeout_seconds) {
+    if ((time() - (int)$_SESSION['LAST_ACTIVITY']) > $timeout_seconds) {
         session_unset();
         session_destroy();
 
@@ -26,14 +26,20 @@ if (isset($_SESSION['LAST_ACTIVITY'])) {
 }
 
 $_SESSION['LAST_ACTIVITY'] = time();
-?>
+
 mysqli_report(MYSQLI_REPORT_OFF);
 
 require_once __DIR__ . '/config.php';
 
-if (!defined('KLINIK_NAMA')) define('KLINIK_NAMA', 'Klinik Praktek Mandiri Dokter Gigi Andreas Aryo Risky Prasetyo');
-if (!defined('KLINIK_ALAMAT')) define('KLINIK_ALAMAT', 'Jln. Illago Boulevard Ruko Mendrisio blok e16-17');
-if (!defined('KLINIK_TELP')) define('KLINIK_TELP', '0811-118-17-18');
+if (!defined('KLINIK_NAMA')) {
+    define('KLINIK_NAMA', 'Klinik Praktek Mandiri Dokter Gigi Andreas Aryo Risky Prasetyo');
+}
+if (!defined('KLINIK_ALAMAT')) {
+    define('KLINIK_ALAMAT', 'Jln. Illago Boulevard Ruko Mendrisio blok e16-17');
+}
+if (!defined('KLINIK_TELP')) {
+    define('KLINIK_TELP', '0811-118-17-18');
+}
 
 function db(): ?mysqli
 {
@@ -50,8 +56,10 @@ function db(): ?mysqli
 function table_exists(?mysqli $conn, string $table): bool
 {
     if (!$conn) return false;
+
     $table = $conn->real_escape_string($table);
     $res = $conn->query("SHOW TABLES LIKE '$table'");
+
     return $res instanceof mysqli_result && $res->num_rows > 0;
 }
 
@@ -84,9 +92,11 @@ function current_user_name(): string
     if (!empty($_SESSION['username'])) return (string)$_SESSION['username'];
     if (!empty($_SESSION['nama'])) return (string)$_SESSION['nama'];
     if (!empty($_SESSION['user']) && is_string($_SESSION['user'])) return $_SESSION['user'];
+
     if (!empty($_SESSION['user']) && is_array($_SESSION['user']) && !empty($_SESSION['user']['username'])) {
         return (string)$_SESSION['user']['username'];
     }
+
     return 'Administrator';
 }
 
@@ -120,11 +130,17 @@ function db_prepare_and_bind(mysqli $conn, string $query, array $params = []): m
 
     if (!empty($params)) {
         $types = '';
+
         foreach ($params as $p) {
-            if (is_int($p)) $types .= 'i';
-            elseif (is_float($p)) $types .= 'd';
-            else $types .= 's';
+            if (is_int($p)) {
+                $types .= 'i';
+            } elseif (is_float($p)) {
+                $types .= 'd';
+            } else {
+                $types .= 's';
+            }
         }
+
         $stmt->bind_param($types, ...$params);
     }
 
@@ -174,6 +190,7 @@ function db_run(string $query, array $params = []): bool
 
     $ok = $stmt->execute();
     $stmt->close();
+
     return $ok;
 }
 
@@ -195,7 +212,9 @@ function db_insert(string $query, array $params = []): int|false
 function next_rm(): string
 {
     $conn = db();
-    if (!$conn || !table_exists($conn, 'pasien')) return 'RM000001';
+    if (!$conn || !table_exists($conn, 'pasien')) {
+        return 'RM000001';
+    }
 
     $row = db_fetch_one("SELECT no_rm FROM pasien ORDER BY id DESC LIMIT 1");
     $num = 1;
@@ -263,7 +282,7 @@ function icd10_options(string $keyword = ''): array
 
     if ($keyword !== '') {
         return db_fetch_all(
-            "SELECT * FROM icd10 WHERE kode LIKE ? OR diagnosis LIKE ? ORDER BY kode ASC LIMIT 100",
+            "SELECT * FROM icd10 WHERE kode LIKE ? OR nama LIKE ? ORDER BY kode ASC LIMIT 100",
             ["%$keyword%", "%$keyword%"]
         );
     }
@@ -276,26 +295,26 @@ function klinik_profile(): array
     $conn = db();
     if (!$conn || !table_exists($conn, 'settings_klinik')) {
         return [
-            'nama_klinik' => KLINIK_NAMA,
+            'nama_klinik'   => KLINIK_NAMA,
             'alamat_klinik' => KLINIK_ALAMAT,
-            'telepon_klinik' => KLINIK_TELP,
-            'email_klinik' => '',
-            'logo_path' => '',
-            'qris_path' => '',
-            'qris_payload' => ''
+            'telepon_klinik'=> KLINIK_TELP,
+            'email_klinik'  => '',
+            'logo_path'     => '',
+            'qris_path'     => '',
+            'qris_payload'  => '',
         ];
     }
 
     $row = db_fetch_one("SELECT * FROM settings_klinik ORDER BY id ASC LIMIT 1");
 
     return [
-        'nama_klinik' => $row['nama_klinik'] ?? KLINIK_NAMA,
+        'nama_klinik'   => $row['nama_klinik'] ?? KLINIK_NAMA,
         'alamat_klinik' => $row['alamat_klinik'] ?? KLINIK_ALAMAT,
-        'telepon_klinik' => $row['telepon_klinik'] ?? KLINIK_TELP,
-        'email_klinik' => $row['email_klinik'] ?? '',
-        'logo_path' => $row['logo_path'] ?? '',
-        'qris_path' => $row['qris_path'] ?? '',
-        'qris_payload' => $row['qris_payload'] ?? ''
+        'telepon_klinik'=> $row['telepon_klinik'] ?? KLINIK_TELP,
+        'email_klinik'  => $row['email_klinik'] ?? '',
+        'logo_path'     => $row['logo_path'] ?? '',
+        'qris_path'     => $row['qris_path'] ?? '',
+        'qris_payload'  => $row['qris_payload'] ?? '',
     ];
 }
 
